@@ -1,0 +1,252 @@
+import asyncio
+import hashlib
+import logging
+import secrets
+import time
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from pathlib import PurePosixPath
+
+from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import HTMLResponse, PlainTextResponse
+from pydantic import BaseModel, Field
+
+from draftbin.config import Config, load_config
+from draftbin.db import Database, Draft
+from draftbin.ids import is_draft_id, new_draft_id
+from draftbin.markdown_render import render_markdown
+from draftbin.storage import HtmlStore
+from draftbin.templates import render_landing, render_markdown_document, render_not_found
+
+logger = logging.getLogger("draftbin")
+
+DRAFT_CSP = "; ".join(
+    [
+        "sandbox allow-popups allow-popups-to-escape-sandbox",
+        "default-src 'none'",
+        "style-src 'unsafe-inline'",
+        "img-src https: data:",
+        "base-uri 'none'",
+        "form-action 'none'",
+    ]
+)
+
+PRIVATE_HEADERS = {
+    "Cache-Control": "no-store, private, must-revalidate",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+    "X-Robots-Tag": "noindex, nofollow, noarchive, nosnippet",
+}
+
+DRAFT_HEADERS = {**PRIVATE_HEADERS, "Content-Security-Policy": DRAFT_CSP}
+
+
+class HtmlUpload(BaseModel):
+    html: str = Field(min_length=1)
+    filename: str | None = None
+    ttl_seconds: int | None = Field(default=None, gt=0)
+
+
+class MarkdownUpload(BaseModel):
+    markdown: str = Field(min_length=1)
+    filename: str | None = None
+    title: str | None = None
+    ttl_seconds: int | None = Field(default=None, gt=0)
+
+
+def safe_filename(value: str | None) -> str | None:
+    if not value:
+        return None
+    name = PurePosixPath(value.replace("\\", "/")).name.strip()
+    return name[:200] or None
+
+
+def title_from_filename(filename: str | None) -> str | None:
+    if not filename:
+        return None
+    return PurePosixPath(filename).stem.strip() or None
+
+
+def isoformat(epoch_seconds: int) -> str:
+    return datetime.fromtimestamp(epoch_seconds, tz=timezone.utc).isoformat()
+
+
+def draft_summary(draft: Draft, config: Config, now: int) -> dict:
+    return {
+        "id": draft.id,
+        "url": config.draft_url(draft.id),
+        "title": draft.title,
+        "filename": draft.filename,
+        "source_format": draft.source_format,
+        "size_bytes": draft.size_bytes,
+        "created_at": isoformat(draft.created_at),
+        "expires_at": isoformat(draft.expires_at),
+        "expires_in_seconds": max(0, draft.expires_at - now),
+    }
+
+
+def create_app(config: Config | None = None) -> FastAPI:
+    config = config or load_config()
+    database = Database(config.db_path)
+    store = HtmlStore(config.drafts_dir)
+
+    def sweep_expired() -> int:
+        expired_ids = database.take_expired_ids(int(time.time()))
+        for draft_id in expired_ids:
+            store.delete(draft_id)
+        return len(expired_ids)
+
+    async def sweep_forever() -> None:
+        while True:
+            await asyncio.sleep(config.sweep_interval_seconds)
+            try:
+                swept = await asyncio.to_thread(sweep_expired)
+            except Exception:
+                logger.exception("sweep failed")
+                continue
+            if swept:
+                logger.info("swept expired drafts", extra={"count": swept})
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        database.initialize()
+        store.initialize()
+        await asyncio.to_thread(sweep_expired)
+        sweeper = asyncio.create_task(sweep_forever())
+        try:
+            yield
+        finally:
+            sweeper.cancel()
+
+    app = FastAPI(title="draftbin", lifespan=lifespan, docs_url=None, redoc_url=None)
+    app.state.config = config
+    app.state.database = database
+    app.state.store = store
+    app.state.sweep_expired = sweep_expired
+
+    def require_token(authorization: str | None = Header(default=None)) -> None:
+        expected = f"Bearer {config.token}"
+        if not authorization or not secrets.compare_digest(authorization, expected):
+            raise HTTPException(status_code=401, detail="Invalid or missing API token.")
+
+    def resolve_expiry(ttl_seconds: int | None, now: int) -> int:
+        ttl = ttl_seconds or config.default_ttl_seconds
+        if ttl > config.max_ttl_seconds:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"ttl_seconds {ttl} exceeds the server maximum "
+                    f"{config.max_ttl_seconds}."
+                ),
+            )
+        return now + ttl
+
+    def publish(
+        html: str,
+        title: str,
+        filename: str | None,
+        source_format: str,
+        expires_at: int,
+        now: int,
+    ) -> dict:
+        size_bytes = len(html.encode("utf-8"))
+        if size_bytes > config.max_upload_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"Rendered document is {size_bytes} bytes; the maximum is "
+                    f"{config.max_upload_bytes}."
+                ),
+            )
+
+        draft = Draft(
+            id=new_draft_id(),
+            title=title,
+            filename=filename,
+            source_format=source_format,
+            created_at=now,
+            expires_at=expires_at,
+            size_bytes=size_bytes,
+            content_hash=f"sha256:{hashlib.sha256(html.encode('utf-8')).hexdigest()}",
+        )
+        store.write(draft.id, html)
+        try:
+            database.insert(draft)
+        except Exception:
+            store.delete(draft.id)
+            raise
+        return draft_summary(draft, config, now)
+
+    @app.get("/", response_class=HTMLResponse)
+    def landing() -> HTMLResponse:
+        return HTMLResponse(
+            render_landing(config.public_base_url, config.default_ttl_seconds, config.theme),
+            headers=PRIVATE_HEADERS,
+        )
+
+    @app.get("/healthz")
+    def healthz() -> dict:
+        return {"ok": True}
+
+    @app.get("/robots.txt", response_class=PlainTextResponse)
+    def robots() -> PlainTextResponse:
+        return PlainTextResponse("User-agent: *\nDisallow: /\n")
+
+    @app.post("/api/upload", status_code=201, dependencies=[Depends(require_token)])
+    def upload_html(body: HtmlUpload) -> dict:
+        now = int(time.time())
+        filename = safe_filename(body.filename)
+        return publish(
+            html=body.html,
+            title=title_from_filename(filename) or "Untitled draft",
+            filename=filename,
+            source_format="html",
+            expires_at=resolve_expiry(body.ttl_seconds, now),
+            now=now,
+        )
+
+    @app.post("/api/upload/markdown", status_code=201, dependencies=[Depends(require_token)])
+    def upload_markdown(body: MarkdownUpload) -> dict:
+        now = int(time.time())
+        expires_at = resolve_expiry(body.ttl_seconds, now)
+        filename = safe_filename(body.filename)
+        rendered = render_markdown(body.markdown)
+        title = (
+            (body.title or "").strip()
+            or rendered.title
+            or title_from_filename(filename)
+            or "Untitled draft"
+        )
+        return publish(
+            html=render_markdown_document(rendered.html, title, expires_at, config.theme),
+            title=title,
+            filename=filename,
+            source_format="markdown",
+            expires_at=expires_at,
+            now=now,
+        )
+
+    @app.get("/api/drafts", dependencies=[Depends(require_token)])
+    def list_drafts() -> dict:
+        now = int(time.time())
+        return {"drafts": [draft_summary(draft, config, now) for draft in database.list_live(now)]}
+
+    @app.delete("/api/drafts/{draft_id}", dependencies=[Depends(require_token)])
+    def delete_draft(draft_id: str) -> dict:
+        if not is_draft_id(draft_id) or not database.delete(draft_id):
+            raise HTTPException(status_code=404, detail="Draft not found.")
+        store.delete(draft_id)
+        return {"ok": True}
+
+    @app.get("/d/{draft_id}", response_class=HTMLResponse)
+    def view_draft(draft_id: str) -> HTMLResponse:
+        now = int(time.time())
+        draft = database.find_live(draft_id, now) if is_draft_id(draft_id) else None
+        html = store.read(draft.id) if draft else None
+        if html is None:
+            if draft:
+                logger.error("draft row without stored html", extra={"draft_id": draft.id})
+            return HTMLResponse(render_not_found(config.theme), status_code=404, headers=PRIVATE_HEADERS)
+        return HTMLResponse(html, headers=DRAFT_HEADERS)
+
+    return app
