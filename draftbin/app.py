@@ -16,7 +16,12 @@ from draftbin.db import Database, Draft
 from draftbin.ids import is_draft_id, new_draft_id
 from draftbin.markdown_render import render_markdown
 from draftbin.storage import HtmlStore
-from draftbin.templates import render_landing, render_markdown_document, render_not_found
+from draftbin.templates import (
+    THEMES,
+    render_landing,
+    render_markdown_document,
+    render_not_found,
+)
 
 logger = logging.getLogger("draftbin")
 
@@ -51,6 +56,7 @@ class MarkdownUpload(BaseModel):
     markdown: str = Field(min_length=1)
     filename: str | None = None
     title: str | None = None
+    theme: str | None = None
     ttl_seconds: int | None = Field(default=None, gt=0)
 
 
@@ -78,6 +84,8 @@ def draft_summary(draft: Draft, config: Config, now: int) -> dict:
         "title": draft.title,
         "filename": draft.filename,
         "source_format": draft.source_format,
+        "theme": draft.theme or config.theme,
+        "themeable": draft.source_format == "markdown",
         "size_bytes": draft.size_bytes,
         "created_at": isoformat(draft.created_at),
         "expires_at": isoformat(draft.expires_at),
@@ -141,20 +149,26 @@ def create_app(config: Config | None = None) -> FastAPI:
             )
         return now + ttl
 
+    def resolve_theme(requested: str | None, draft_theme: str | None) -> str:
+        if requested in THEMES:
+            return requested
+        return draft_theme or config.theme
+
     def publish(
-        html: str,
+        stored: str,
+        served_bytes: int,
         title: str,
         filename: str | None,
         source_format: str,
+        theme: str | None,
         expires_at: int,
         now: int,
     ) -> dict:
-        size_bytes = len(html.encode("utf-8"))
-        if size_bytes > config.max_upload_bytes:
+        if served_bytes > config.max_upload_bytes:
             raise HTTPException(
                 status_code=413,
                 detail=(
-                    f"Rendered document is {size_bytes} bytes; the maximum is "
+                    f"Rendered document is {served_bytes} bytes; the maximum is "
                     f"{config.max_upload_bytes}."
                 ),
             )
@@ -164,12 +178,13 @@ def create_app(config: Config | None = None) -> FastAPI:
             title=title,
             filename=filename,
             source_format=source_format,
+            theme=theme,
             created_at=now,
             expires_at=expires_at,
-            size_bytes=size_bytes,
-            content_hash=f"sha256:{hashlib.sha256(html.encode('utf-8')).hexdigest()}",
+            size_bytes=served_bytes,
+            content_hash=f"sha256:{hashlib.sha256(stored.encode('utf-8')).hexdigest()}",
         )
-        store.write(draft.id, html)
+        store.write(draft.id, stored)
         try:
             database.insert(draft)
         except Exception:
@@ -197,10 +212,12 @@ def create_app(config: Config | None = None) -> FastAPI:
         now = int(time.time())
         filename = safe_filename(body.filename)
         return publish(
-            html=body.html,
+            stored=body.html,
+            served_bytes=len(body.html.encode("utf-8")),
             title=title_from_filename(filename) or "Untitled draft",
             filename=filename,
             source_format="html",
+            theme=None,
             expires_at=resolve_expiry(body.ttl_seconds, now),
             now=now,
         )
@@ -208,6 +225,11 @@ def create_app(config: Config | None = None) -> FastAPI:
     @app.post("/api/upload/markdown", status_code=201, dependencies=[Depends(require_token)])
     def upload_markdown(body: MarkdownUpload) -> dict:
         now = int(time.time())
+        if body.theme is not None and body.theme not in THEMES:
+            raise HTTPException(
+                status_code=422, detail=f"theme must be one of {', '.join(THEMES)}."
+            )
+
         expires_at = resolve_expiry(body.ttl_seconds, now)
         filename = safe_filename(body.filename)
         rendered = render_markdown(body.markdown)
@@ -218,10 +240,15 @@ def create_app(config: Config | None = None) -> FastAPI:
             or "Untitled draft"
         )
         return publish(
-            html=render_markdown_document(rendered.html, title, expires_at, config.theme),
+            stored=rendered.html,
+            # The auto palette carries both light and dark rules, so it bounds every theme.
+            served_bytes=len(
+                render_markdown_document(rendered.html, title, expires_at, "auto").encode("utf-8")
+            ),
             title=title,
             filename=filename,
             source_format="markdown",
+            theme=body.theme,
             expires_at=expires_at,
             now=now,
         )
@@ -239,14 +266,26 @@ def create_app(config: Config | None = None) -> FastAPI:
         return {"ok": True}
 
     @app.get("/d/{draft_id}", response_class=HTMLResponse)
-    def view_draft(draft_id: str) -> HTMLResponse:
+    def view_draft(draft_id: str, theme: str | None = None) -> HTMLResponse:
         now = int(time.time())
         draft = database.find_live(draft_id, now) if is_draft_id(draft_id) else None
-        html = store.read(draft.id) if draft else None
-        if html is None:
+        stored = store.read(draft.id) if draft else None
+        if draft is None or stored is None:
             if draft:
-                logger.error("draft row without stored html", extra={"draft_id": draft.id})
-            return HTMLResponse(render_not_found(config.theme), status_code=404, headers=PRIVATE_HEADERS)
-        return HTMLResponse(html, headers=DRAFT_HEADERS)
+                logger.error("draft row without stored body", extra={"draft_id": draft.id})
+            return HTMLResponse(
+                render_not_found(resolve_theme(theme, None)),
+                status_code=404,
+                headers=PRIVATE_HEADERS,
+            )
+
+        if draft.source_format == "html":
+            return HTMLResponse(stored, headers=DRAFT_HEADERS)
+        return HTMLResponse(
+            render_markdown_document(
+                stored, draft.title, draft.expires_at, resolve_theme(theme, draft.theme)
+            ),
+            headers=DRAFT_HEADERS,
+        )
 
     return app

@@ -48,16 +48,37 @@ Uploads and management need `Authorization: Bearer $DRAFTBIN_TOKEN`. Viewing doe
 | `POST`   | `/api/upload/markdown`  | Render markdown, then publish it               |
 | `GET`    | `/api/drafts`           | List live drafts with their expiry times       |
 | `DELETE` | `/api/drafts/{id}`      | Delete a draft before it expires               |
-| `GET`    | `/d/{id}`               | View a draft (public, unlisted, expiring)      |
+| `GET`    | `/d/{id}?theme=`        | View a draft (public, unlisted, expiring)      |
 | `GET`    | `/healthz`              | Liveness probe                                 |
 
 `POST /api/upload` takes `html`, plus optional `filename` and `ttl_seconds`.
-`POST /api/upload/markdown` takes `markdown`, plus optional `filename`, `title`, and
-`ttl_seconds`. A `ttl_seconds` above the server maximum is rejected rather than
-silently clamped.
+`POST /api/upload/markdown` takes `markdown`, plus optional `filename`, `title`,
+`theme`, and `ttl_seconds`. A `ttl_seconds` above the server maximum is rejected rather
+than silently clamped.
 
 Document titles resolve in order: explicit `title`, then the first `# ` heading, then
 the filename stem, then `Untitled draft`.
+
+## Theming
+
+Markdown drafts store only a rendered body fragment; the document shell is assembled
+per request. So the theme is a **read-time** decision, and any of three levels can set
+it, in order of precedence:
+
+1. `?theme=dark` on the view URL — per view, per reader, no republishing
+2. `"theme": "dark"` in the upload body — pinned to that one draft
+3. `DRAFTBIN_THEME` — the server default
+
+Each is `auto`, `light`, or `dark`. An unrecognised `?theme=` value falls back to the
+next level rather than erroring, since these URLs get hand-edited. `auto` follows the
+reader's OS via `prefers-color-scheme`; `light` and `dark` are unconditional.
+
+Because the shell is assembled at request time, editing the stylesheet also changes
+**already-published** drafts — no republishing needed.
+
+**HTML uploads are not themeable.** They are stored and served byte for byte, so
+`?theme=` is ignored on them; the document you uploaded owns its own styling. The
+`themeable` field in API responses tells you which kind you have.
 
 ## Serving it
 
@@ -102,19 +123,15 @@ Two things to get right on the Cloudflare side:
 | --------------------------------- | ----------------------- | ---------------------------------------------- |
 | `DRAFTBIN_TOKEN`                  | *required*              | Bearer token for uploads; 20+ chars            |
 | `DRAFTBIN_PUBLIC_BASE_URL`        | `http://localhost:8000` | Origin returned URLs are built from            |
-| `DRAFTBIN_THEME`                  | `auto`                  | `auto`, `light`, or `dark`                      |
+| `DRAFTBIN_THEME`                  | `auto`                  | Default theme; `?theme=` overrides per view     |
 | `DRAFTBIN_DATA_DIR`               | `.local`                | `/data` in the container                        |
 | `DRAFTBIN_DEFAULT_TTL_SECONDS`    | `86400`                 | 24 hours                                        |
 | `DRAFTBIN_MAX_TTL_SECONDS`        | `604800`                | 7 days; caps per-upload overrides               |
 | `DRAFTBIN_MAX_UPLOAD_BYTES`       | `2097152`               | 2 MiB, measured on the rendered document        |
 | `DRAFTBIN_SWEEP_INTERVAL_SECONDS` | `300`                   | How often expired drafts are deleted            |
 
-`DRAFTBIN_THEME=auto` follows each reader's OS setting via `prefers-color-scheme`.
-Setting `dark` or `light` is unconditional, which is what you want if you always read
-in one mode regardless of what the machine is set to.
-
-The theme is baked into each document when it's published, so a change applies to new
-drafts only. With a 24-hour TTL, everything catches up within a day.
+`DRAFTBIN_THEME` sets the default for markdown drafts that don't specify one and are
+viewed without `?theme=`. See [Theming](#theming) for the full precedence chain.
 
 Generate a token with:
 

@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS drafts (
     title         TEXT NOT NULL,
     filename      TEXT,
     source_format TEXT NOT NULL,
+    theme         TEXT,
     created_at    INTEGER NOT NULL,
     expires_at    INTEGER NOT NULL,
     size_bytes    INTEGER NOT NULL,
@@ -25,6 +26,7 @@ class Draft:
     title: str
     filename: str | None
     source_format: str
+    theme: str | None
     created_at: int
     expires_at: int
     size_bytes: int
@@ -54,21 +56,35 @@ class Database:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("PRAGMA synchronous=NORMAL")
             connection.executescript(SCHEMA)
+            self.migrate_to_themed_bodies(connection)
+
+    def migrate_to_themed_bodies(self, connection: sqlite3.Connection) -> None:
+        """Markdown drafts used to store a whole document; they now store a body fragment.
+
+        Legacy rows are relabelled as html so they keep being served verbatim rather than
+        being double-wrapped in a fresh shell. They expire on their original schedule.
+        """
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(drafts)")}
+        if "theme" in columns:
+            return
+        connection.execute("ALTER TABLE drafts ADD COLUMN theme TEXT")
+        connection.execute("UPDATE drafts SET source_format = 'html' WHERE source_format = 'markdown'")
 
     def insert(self, draft: Draft) -> None:
         with self.connect() as connection:
             connection.execute(
                 """
                 INSERT INTO drafts (
-                    id, title, filename, source_format,
+                    id, title, filename, source_format, theme,
                     created_at, expires_at, size_bytes, content_hash
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     draft.id,
                     draft.title,
                     draft.filename,
                     draft.source_format,
+                    draft.theme,
                     draft.created_at,
                     draft.expires_at,
                     draft.size_bytes,
