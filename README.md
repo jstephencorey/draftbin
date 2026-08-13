@@ -4,7 +4,7 @@ Self-hosted ephemeral publishing for agent-generated documents. Post HTML or mar
 get back an unlisted URL you can open anywhere, and have it delete itself after a day.
 
 Built for the workflow where a coding agent produces a plan, an analysis, or a day's
-writing, and you want to *read* it in a browser instead of scrolling a terminal.
+writing, and you want to _read_ it in a browser instead of scrolling a terminal.
 
 ```sh
 curl -X POST https://drafts.example.com/api/upload/markdown \
@@ -42,14 +42,14 @@ Republishing mints a **new** ID. A link that leaked before it expired stays dead
 
 Uploads and management need `Authorization: Bearer $DRAFTBIN_TOKEN`. Viewing does not.
 
-| Method   | Path                    | Purpose                                        |
-| -------- | ----------------------- | ---------------------------------------------- |
-| `POST`   | `/api/upload`           | Publish a prebuilt HTML document               |
-| `POST`   | `/api/upload/markdown`  | Render markdown, then publish it               |
-| `GET`    | `/api/drafts`           | List live drafts with their expiry times       |
-| `DELETE` | `/api/drafts/{id}`      | Delete a draft before it expires               |
-| `GET`    | `/d/{id}?theme=`        | View a draft (public, unlisted, expiring)      |
-| `GET`    | `/healthz`              | Liveness probe                                 |
+| Method   | Path                   | Purpose                                   |
+| -------- | ---------------------- | ----------------------------------------- |
+| `POST`   | `/api/upload`          | Publish a prebuilt HTML document          |
+| `POST`   | `/api/upload/markdown` | Render markdown, then publish it          |
+| `GET`    | `/api/drafts`          | List live drafts with their expiry times  |
+| `DELETE` | `/api/drafts/{id}`     | Delete a draft before it expires          |
+| `GET`    | `/d/{id}?theme=`       | View a draft (public, unlisted, expiring) |
+| `GET`    | `/healthz`             | Liveness probe                            |
 
 `POST /api/upload` takes `html`, plus optional `filename` and `ttl_seconds`.
 `POST /api/upload/markdown` takes `markdown`, plus optional `filename`, `title`,
@@ -104,31 +104,20 @@ header, which defeats the whole point of an unlisted URL.
 
 ### Behind a Cloudflare tunnel
 
-`docker-compose.yml` runs the app plus `cloudflared`, so nothing is exposed directly.
-Set `CLOUDFLARE_TUNNEL_TOKEN` and point the tunnel's public hostname at
-`http://draftbin:8000`.
-
-Two things to get right on the Cloudflare side:
-
-1. **Use a dedicated hostname** (`drafts.example.com`), not a path on a domain that
-   hosts your other self-hosted apps. Keeps drafts out of any shared cookie scope.
-2. **Confirm Cloudflare is not caching drafts.** Defaults don't cache HTML, but
-   "Cache Everything" page rules and Automatic Platform Optimization do — and a cached
-   response will outlive expiry. Add a Cache Rule bypassing cache for `/d/*` and check
-   `curl -sI` shows `cf-cache-status: DYNAMIC` or `BYPASS`.
+`docker-compose.yml` runs the app But assumes that you are running a CloudFlare tunnel separately. Make sure to not have Cloudflare caching the drafts.
 
 ## Configuration
 
-| Variable                          | Default                 | Notes                                          |
-| --------------------------------- | ----------------------- | ---------------------------------------------- |
-| `DRAFTBIN_TOKEN`                  | *required*              | Bearer token for uploads; 20+ chars            |
-| `DRAFTBIN_PUBLIC_BASE_URL`        | `http://localhost:8000` | Origin returned URLs are built from            |
-| `DRAFTBIN_THEME`                  | `auto`                  | Default theme; `?theme=` overrides per view     |
-| `DRAFTBIN_DATA_DIR`               | `.local`                | `/data` in the container                        |
-| `DRAFTBIN_DEFAULT_TTL_SECONDS`    | `86400`                 | 24 hours                                        |
-| `DRAFTBIN_MAX_TTL_SECONDS`        | `604800`                | 7 days; caps per-upload overrides               |
-| `DRAFTBIN_MAX_UPLOAD_BYTES`       | `2097152`               | 2 MiB, measured on the rendered document        |
-| `DRAFTBIN_SWEEP_INTERVAL_SECONDS` | `300`                   | How often expired drafts are deleted            |
+| Variable                          | Default                 | Notes                                       |
+| --------------------------------- | ----------------------- | ------------------------------------------- |
+| `DRAFTBIN_TOKEN`                  | _required_              | Bearer token for uploads; 20+ chars         |
+| `DRAFTBIN_PUBLIC_BASE_URL`        | `http://localhost:8000` | Origin returned URLs are built from         |
+| `DRAFTBIN_THEME`                  | `auto`                  | Default theme; `?theme=` overrides per view |
+| `DRAFTBIN_DATA_DIR`               | `.local`                | `/data` in the container                    |
+| `DRAFTBIN_DEFAULT_TTL_SECONDS`    | `86400`                 | 24 hours                                    |
+| `DRAFTBIN_MAX_TTL_SECONDS`        | `604800`                | 7 days; caps per-upload overrides           |
+| `DRAFTBIN_MAX_UPLOAD_BYTES`       | `2097152`               | 2 MiB, measured on the rendered document    |
+| `DRAFTBIN_SWEEP_INTERVAL_SECONDS` | `300`                   | How often expired drafts are deleted        |
 
 `DRAFTBIN_THEME` sets the default for markdown drafts that don't specify one and are
 viewed without `?theme=`. See [Theming](#theming) for the full precedence chain.
@@ -162,7 +151,7 @@ Metadata lives in SQLite and rendered documents live as files, both under
 Inspired by Postplan, Theo's static HTML draft host, and by
 [PatchPage](https://github.com/allisonmahmood/PatchPage), an open-source
 self-hostable take on the same idea. draftbin is a separate implementation with
-different priorities: single-user, markdown-first, expiring by default.
+different priorities: python, single-user, markdown-first, expiring by default.
 
 ## License
 
