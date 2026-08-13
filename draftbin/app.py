@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
@@ -127,6 +127,19 @@ def create_app(config: Config | None = None) -> FastAPI:
             sweeper.cancel()
 
     app = FastAPI(title="draftbin", lifespan=lifespan, docs_url=None, redoc_url=None)
+
+    @app.middleware("http")
+    async def keep_responses_private(request: Request, call_next):
+        """Nothing here is cacheable: API payloads and draft pages both carry secret URLs.
+
+        Applied as middleware rather than per route so it also covers error responses,
+        which are built fresh and would drop headers a route or dependency had set.
+        """
+        response = await call_next(request)
+        for name, value in PRIVATE_HEADERS.items():
+            response.headers.setdefault(name, value)
+        return response
+
     app.state.config = config
     app.state.database = database
     app.state.store = store

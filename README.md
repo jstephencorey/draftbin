@@ -102,6 +102,10 @@ only. Mermaid diagrams and JS charts will not run.
 link inside a draft leaks the draft's secret URL to that third party in the `Referer`
 header, which defeats the whole point of an unlisted URL.
 
+Every response carries those four headers, not just draft views — `GET /api/drafts`
+returns every live draft URL at once, so it is the last thing that should sit in a cache.
+Only the CSP is draft-specific.
+
 ### Behind a Cloudflare tunnel
 
 `docker-compose.yml` runs the app But assumes that you are running a CloudFlare tunnel separately. Make sure to not have Cloudflare caching the drafts.

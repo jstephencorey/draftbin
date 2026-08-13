@@ -44,6 +44,25 @@ def test_draft_response_carries_the_privacy_headers(client):
     assert headers["x-content-type-options"] == "nosniff"
 
 
+def test_json_responses_are_never_cached(client):
+    """These payloads carry draft URLs, which are the only thing gating access."""
+    draft_id = client.post(
+        "/api/upload/markdown", json={"markdown": "# Cached\n"}, headers=AUTH
+    ).json()["id"]
+
+    responses = [
+        client.post("/api/upload/markdown", json={"markdown": "# New\n"}, headers=AUTH),
+        client.post("/api/upload", json={"html": "<p>hi</p>"}, headers=AUTH),
+        client.get("/api/drafts", headers=AUTH),
+        client.get("/api/drafts"),
+        client.delete(f"/api/drafts/{draft_id}", headers=AUTH),
+        client.get("/healthz"),
+    ]
+    for response in responses:
+        assert "no-store" in response.headers["cache-control"], response.request.url
+        assert response.headers["referrer-policy"] == "no-referrer"
+
+
 def test_robots_txt_disallows_everything(client):
     assert "Disallow: /" in client.get("/robots.txt").text
 
