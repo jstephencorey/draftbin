@@ -1,32 +1,34 @@
+from dataclasses import dataclass
 from datetime import datetime
 from html import escape
 from zoneinfo import ZoneInfo
 
 from pygments.formatters import HtmlFormatter
 
+from draftbin.fonts import FONT_FACE_CSS
 from draftbin.html_document import Heading, outline
 
 # Below this a contents list is longer than the navigation it saves.
 MINIMUM_OUTLINE_ENTRIES = 3
 
 LIGHT_VARS = """
-  --bg: #fdfdfc;
-  --fg: #1f2328;
-  --muted: #656d76;
-  --rule: #d8dee4;
-  --accent: #0550ae;
-  --code-bg: #f2f3f5;
-  --quote-bg: #f6f8fa;
+  --bg: #fbf9f4;
+  --fg: #23201b;
+  --muted: #6c655a;
+  --rule: #ded7c9;
+  --accent: #8f4b1e;
+  --code-bg: #f1ece1;
+  --quote-bg: #f4efe4;
 """
 
 DARK_VARS = """
-  --bg: #16181d;
-  --fg: #e3e6ea;
-  --muted: #9198a1;
-  --rule: #2f343d;
-  --accent: #79b8ff;
-  --code-bg: #22262d;
-  --quote-bg: #1c1f25;
+  --bg: #191714;
+  --fg: #e8e3d8;
+  --muted: #a29a8c;
+  --rule: #38332c;
+  --accent: #e0a06a;
+  --code-bg: #232019;
+  --quote-bg: #201d18;
 """
 
 BASE_CSS = """
@@ -38,49 +40,51 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  font-size: 17px;
-  line-height: 1.65;
+  font-family: Merriweather, Georgia, "Iowan Old Style", "Times New Roman", serif;
+  font-size: 1.125rem;
+  line-height: 1.75;
+  text-rendering: optimizeLegibility;
 }
 
 main {
-  max-width: 44rem;
+  max-width: 42rem;
   margin: 0 auto;
-  padding: 3.5rem 1.25rem 5rem;
+  padding: 4rem 1.35rem 6rem;
 }
 
 h1, h2, h3, h4, h5, h6 {
-  line-height: 1.25;
-  margin: 2.25em 0 0.75em;
-  font-weight: 600;
+  line-height: 1.3;
+  margin: 2em 0 0.6em;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 h1 {
-  font-size: 2rem;
+  font-size: 2.1rem;
   margin-top: 0;
-  padding-bottom: 0.3em;
-  border-bottom: 1px solid var(--rule);
+  line-height: 1.2;
 }
 
 h2 {
   font-size: 1.5rem;
-  padding-bottom: 0.25em;
+  padding-bottom: 0.3em;
   border-bottom: 1px solid var(--rule);
 }
 
-h3 { font-size: 1.25rem; }
-h4 { font-size: 1.05rem; }
+h3 { font-size: 1.22rem; }
+h4 { font-size: 1.06rem; }
 h5, h6 { font-size: 1rem; color: var(--muted); }
 
-p, ul, ol, dl, blockquote, pre, details { margin: 0 0 1.15em; }
+p, ul, ol, dl, blockquote, pre, details { margin: 0 0 1.3em; }
 
-dt { font-weight: 600; margin-top: 0.9em; }
-dd { margin: 0.2em 0 0.6em 1.4em; color: var(--muted); }
+dt { font-weight: 700; margin-top: 1em; }
+dd { margin: 0.2em 0 0.7em 1.5em; color: var(--muted); }
 
 a {
   color: var(--accent);
   text-decoration: underline;
-  text-underline-offset: 0.15em;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.17em;
 }
 
 .header-anchor {
@@ -96,16 +100,16 @@ h2:hover .header-anchor,
 h3:hover .header-anchor,
 h4:hover .header-anchor { opacity: 1; }
 
-ul, ol { padding-left: 1.6em; }
-li { margin: 0.3em 0; }
-li > ul, li > ol { margin: 0.3em 0; }
+ul, ol { padding-left: 1.5em; }
+li { margin: 0.35em 0; }
+li > ul, li > ol { margin: 0.35em 0; }
 
 ul.contains-task-list { padding-left: 1.1em; }
 li.task-list-item { list-style: none; }
 li.task-list-item input { margin-right: 0.5em; }
 
 blockquote {
-  padding: 0.6em 1.1em;
+  padding: 0.7em 1.2em;
   border-left: 3px solid var(--rule);
   background: var(--quote-bg);
   color: var(--muted);
@@ -114,22 +118,25 @@ blockquote {
 
 blockquote > :last-child { margin-bottom: 0; }
 
+/* Merriweather has a tall x-height, so a monospace at the usual 0.875em reads oversized
+   next to it. */
 code, kbd, pre, samp {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 0.875em;
+  font-size: 0.82em;
 }
 
 code {
   background: var(--code-bg);
-  padding: 0.15em 0.35em;
+  padding: 0.15em 0.4em;
   border-radius: 4px;
 }
 
 pre {
   background: var(--code-bg);
-  padding: 0.9em 1.1em;
+  padding: 1em 1.2em;
   border-radius: 6px;
   overflow-x: auto;
+  line-height: 1.55;
 }
 
 pre code {
@@ -143,22 +150,23 @@ pre.highlight { background: var(--code-bg); }
 
 .table-scroll {
   overflow-x: auto;
-  margin: 0 0 1.15em;
+  margin: 0 0 1.3em;
 }
 
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.94em;
+  font-size: 0.9em;
+  line-height: 1.5;
 }
 
 th, td {
   border: 1px solid var(--rule);
-  padding: 0.45em 0.7em;
+  padding: 0.5em 0.75em;
   text-align: left;
 }
 
-th { background: var(--quote-bg); font-weight: 600; }
+th { background: var(--quote-bg); font-weight: 700; }
 
 img { max-width: 100%; height: auto; border-radius: 4px; }
 
@@ -166,7 +174,7 @@ hr {
   height: 1px;
   border: 0;
   background: var(--rule);
-  margin: 2.5em 0;
+  margin: 2.75em 0;
 }
 
 .footnotes-sep { display: none; }
@@ -180,26 +188,26 @@ hr {
 }
 
 .draft-contents {
-  margin: 0 0 2.5em;
-  padding: 0.6em 1.1em;
+  margin: 0 0 2.75em;
+  padding: 0.7em 1.2em;
   border: 1px solid var(--rule);
   border-radius: 6px;
-  font-size: 0.92em;
+  font-size: 0.9em;
 }
 
 .draft-contents summary {
   cursor: pointer;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--muted);
 }
 
 .draft-contents ul {
   list-style: none;
-  margin: 0.7em 0 0.2em;
+  margin: 0.8em 0 0.3em;
   padding-left: 0;
 }
 
-.draft-contents li { margin: 0.25em 0; }
+.draft-contents li { margin: 0.3em 0; }
 .draft-contents li.depth-3 { padding-left: 1.3em; }
 .draft-contents a { text-decoration: none; }
 .draft-contents a:hover { text-decoration: underline; }
@@ -208,8 +216,75 @@ hr {
   margin-top: 4em;
   padding-top: 1em;
   border-top: 1px solid var(--rule);
-  font-size: 0.82em;
+  font-size: 0.8em;
   color: var(--muted);
+}
+
+.paste-form { margin: 0 0 2em; }
+
+.paste-form label {
+  display: block;
+  margin-bottom: 0.35em;
+  font-size: 0.85em;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.paste-form textarea,
+.paste-form input {
+  display: block;
+  width: 100%;
+  margin-bottom: 1.4em;
+  padding: 0.7em 0.85em;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+.paste-form textarea {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  resize: vertical;
+}
+
+.paste-form textarea:focus,
+.paste-form input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.paste-form button {
+  padding: 0.6em 1.6em;
+  background: var(--accent);
+  color: var(--bg);
+  border: 0;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.paste-hint {
+  display: inline-block;
+  margin-left: 1em;
+  font-size: 0.85em;
+  color: var(--muted);
+}
+
+.paste-error {
+  padding: 0.7em 1.1em;
+  margin: 0 0 1.5em;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  color: var(--accent);
+  font-size: 0.9em;
 }
 
 @media print {
@@ -217,7 +292,7 @@ hr {
   main { max-width: none; padding: 0; }
   pre, code, blockquote, th { background: none; }
   pre, blockquote { border: 1px solid #ccc; }
-  .draft-meta, .heading-anchor, .draft-contents { display: none; }
+  .draft-meta, .heading-anchor, .draft-contents, .paste-form { display: none; }
 }
 """
 
@@ -225,6 +300,16 @@ LIGHT_HIGHLIGHT = HtmlFormatter(style="default").get_style_defs(".highlight")
 DARK_HIGHLIGHT = HtmlFormatter(style="monokai").get_style_defs(".highlight")
 
 THEMES = ("auto", "light", "dark")
+
+
+@dataclass(frozen=True)
+class PasteForm:
+    """What the homepage form should show, including anything a failed submit must keep."""
+
+    text: str = ""
+    title: str = ""
+    needs_token: bool = True
+    error: str | None = None
 
 
 def theme_css(theme: str) -> str:
@@ -259,6 +344,7 @@ def render_page(title: str, body_html: str, theme: str) -> str:
 <meta name="robots" content="noindex, nofollow, noarchive">
 <title>{escape(title)}</title>
 <style>
+{FONT_FACE_CSS}
 {theme_css(theme)}
 {BASE_CSS}
 </style>
@@ -298,22 +384,46 @@ def render_markdown_document(
     return render_page(title, f"{contents}{body_html}\n{meta}", theme)
 
 
-def render_landing(public_base_url: str, default_ttl_seconds: int, theme: str) -> str:
+def render_token_field(needs_token: bool) -> str:
+    """Once the cookie is set the field is gone, which is the whole point of the cookie."""
+    if not needs_token:
+        return ""
+    return """<label for="token">Token</label>
+<input id="token" name="token" type="password" autocomplete="current-password"
+       placeholder="DRAFTBIN_TOKEN">
+"""
+
+
+def render_landing(
+    public_base_url: str, default_ttl_seconds: int, theme: str, form: PasteForm
+) -> str:
     hours = default_ttl_seconds / 3600
+    error = f'<p class="paste-error">{escape(form.error)}</p>\n' if form.error else ""
     return render_page(
         "draftbin",
         f"""
 <h1>draftbin</h1>
-<p>Ephemeral publishing for agent-generated HTML and markdown. Uploads need a bearer
-token; draft URLs are unlisted, public, and expire automatically.</p>
-<h2>Publish</h2>
+<p>Paste something below and get back a link that reads well on a phone and deletes
+itself in {hours:g} hours. Markdown is rendered; plain text is fine too.</p>
+{error}<form class="paste-form" method="post" action="/paste">
+<label for="text">Text</label>
+<textarea id="text" name="text" rows="16" required
+          placeholder="# Notes&#10;&#10;Paste markdown or plain text..."
+>{escape(form.text)}</textarea>
+<label for="title">Title <span>(optional)</span></label>
+<input id="title" name="title" type="text" value="{escape(form.title, quote=True)}"
+       placeholder="Taken from the first heading if left blank">
+{render_token_field(form.needs_token)}<button type="submit">Publish</button>
+<span class="paste-hint">Expires in {hours:g} hours.</span>
+</form>
+<h2>From a script</h2>
 <pre><code>curl -X POST {escape(public_base_url)}/api/upload/markdown \\
   -H "Authorization: Bearer $DRAFTBIN_TOKEN" \\
   -H "Content-Type: application/json" \\
   -d '{{"markdown": "# Hello", "filename": "notes.md"}}'</code></pre>
 <p>Post to <code>/api/upload</code> with an <code>html</code> field to publish a
-prebuilt document instead. Default lifetime is {hours:g} hours; override per upload
-with <code>ttl_seconds</code>.</p>
+prebuilt document instead. Override the lifetime per upload with
+<code>ttl_seconds</code>.</p>
 """,
         theme,
     )

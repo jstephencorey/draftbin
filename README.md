@@ -17,9 +17,12 @@ curl -X POST https://drafts.example.com/api/upload/markdown \
 {"id":"broad-half","url":"https://drafts.example.com/d/broad-half", ...}
 ```
 
-Markdown is rendered to a styled standalone document â€” tables, footnotes, task lists,
+Markdown is rendered to a styled standalone document — tables, footnotes, task lists,
 definition lists, syntax-highlighted code, light/dark palettes, a collapsible contents
 list, and a print stylesheet. HTML uploads are stored and served byte for byte.
+
+There is also a paste box on the homepage, for the times you want to publish something
+without a terminal in front of you.
 
 ## Readable URLs
 
@@ -59,7 +62,7 @@ Expiry is enforced two ways, and both matter:
   later compromise of the host would expose.
 
 Both deletion paths drop the database row before the file, so a crash in between would
-strand a file that nothing revisits â€” sweeping is driven off rows, and that row is gone.
+strand a file that nothing revisits — sweeping is driven off rows, and that row is gone.
 Startup reconciles the two by deleting any stored file with no matching row.
 
 Publishing again mints a **new** ID. A link that leaked before it expired stays dead.
@@ -68,14 +71,14 @@ Publishing again mints a **new** ID. A link that leaked before it expired stays 
 
 `PUT /api/drafts/{id}/markdown` (or `/html`) swaps the body of a live draft and keeps
 its ID, so a link already written into a note survives the revision. It takes the same
-fields as the matching upload endpoint, and a draft may change format on the way â€” a
+fields as the matching upload endpoint, and a draft may change format on the way — a
 markdown draft replaced with HTML stops being themeable.
 
 Replacing **resets the expiry**, exactly as publishing again would; otherwise a revision
 made shortly before the deadline would produce a link that died minutes later. The
 server maximum still caps each window.
 
-An expired ID cannot be replaced â€” that would revive a link that may already have
+An expired ID cannot be replaced — that would revive a link that may already have
 leaked. Publish a new draft instead.
 
 `PATCH /api/drafts/{id}` takes `ttl_seconds` alone and moves the expiry without touching
@@ -89,7 +92,7 @@ because every window is still bounded by `DRAFTBIN_MAX_TTL_SECONDS`.
 ## When a link is dead
 
 Following a dead link gives a page that distinguishes the two cases: an ID that once
-worked reads "no longer available â€¦ removed on _date_", and an ID that never existed
+worked reads "no longer available … removed on _date_", and an ID that never existed
 reads "does not exist". Without that split, a stale link in a note is indistinguishable
 from a typo, and the reflex is to go looking for a bug that isn't there.
 
@@ -113,6 +116,9 @@ Uploads and management need `Authorization: Bearer $DRAFTBIN_TOKEN`. Viewing doe
 | `DELETE` | `/api/drafts/{id}`     | Delete a draft before it expires          |
 | `GET`    | `/d/{id}?theme=`       | View a draft (public, unlisted, expiring) |
 | `HEAD`   | `/d/{id}`              | Check a link without fetching the body    |
+| `GET`    | `/`                    | Landing page and paste box                |
+| `POST`   | `/paste`               | Publish from the paste box (form-encoded) |
+| `GET`    | `/static/fonts/{file}` | The reading face (public, cacheable)      |
 | `GET`    | `/healthz`             | Liveness probe                            |
 
 `DRAFTBIN_MAX_UPLOAD_BYTES` is enforced twice: against `Content-Length` before the
@@ -126,16 +132,71 @@ A chunked request carries no `Content-Length` and is only caught by the second c
 `theme`, and `ttl_seconds`. A `ttl_seconds` above the server maximum is rejected rather
 than silently clamped.
 
-Responses carry a `content_hash` over the **stored body** â€” `sha256:` plus the digest.
+Responses carry a `content_hash` over the **stored body** — `sha256:` plus the digest.
 For an HTML upload the stored body is the file you sent, so the hash identifies that
 file. For markdown it is the rendered fragment, not your `.md`, so it tells you whether
 two drafts hold the same document but cannot be recomputed from the source. Its use is
 comparing drafts to each other and confirming a replacement actually changed something.
 
 Markdown titles resolve in order: explicit `title`, then the first `# ` heading, then
-the filename stem, then `Untitled draft`. HTML uploads have no `title` field â€” the
+the filename stem, then `Untitled draft`. HTML uploads have no `title` field — the
 document names itself, so the `<title>` element is read out of it, falling back to the
 filename stem and then `Untitled draft`.
+
+## The paste box
+
+`GET /` shows a textarea, an optional title, and a token field; `POST /paste` renders the
+text as markdown, publishes it, and redirects you to the new draft, so the URL lands in
+the address bar ready to share.
+
+A form cannot send an `Authorization` header without JavaScript, and the CSP rules that
+out, so the token arrives in a field once and then rides in a cookie:
+
+```
+Set-Cookie: draftbin_token=…; Max-Age=2592000; Path=/; HttpOnly; SameSite=Strict; Secure
+```
+
+`SameSite=Strict` is the one doing real work. Without it any web page could POST a form
+at `/paste` and the browser would attach the cookie, letting a third party publish to
+your bin; Strict withholds it on every cross-site request, top-level POSTs included.
+`HttpOnly` is belt-and-braces given there is no JavaScript anywhere here. `Secure` is set
+only when `DRAFTBIN_PUBLIC_BASE_URL` is `https://`, because a Secure cookie is dropped
+over plain http and that would break local development.
+
+Two things to be aware of. The cookie **is** the upload token, so it now exists in a
+browser's cookie jar as well as wherever you keep it, and anyone holding your unlocked
+phone can publish. And rotating the server token leaves a stale cookie behind — the next
+paste answers `401`, clears the cookie, and shows the token field again rather than
+looping.
+
+The redirect is relative, so whichever hostname you arrived on is the one you keep.
+
+## Typography
+
+Drafts are set in [Merriweather][mw], served from this origin rather than from a font
+CDN. A `<link>` to Google Fonts would be blocked by `default-src 'none'` outright, and if
+it weren't it would report every draft you open to a third party. Shipping the files is
+also the only way the face renders on a phone, where neither Merriweather nor Garamond is
+installed.
+
+[mw]: https://github.com/SorkinType/Merriweather
+
+Both faces are variable across the weight axis, so one file per style covers regular and
+bold. `latin` and `latin-ext` are split on `unicode-range`, so a document with no
+accented characters never fetches the ext files.
+
+This is the one part of a draft worth caching, and it is served
+`public, max-age=31536000, immutable` while everything else stays `no-store`. Only the
+filenames in `fonts.py` resolve, so the route cannot be walked out of its folder.
+
+`font-src` names the origin explicitly as well as `'self'`, because the `sandbox`
+directive puts the document on an opaque origin and browsers have not always agreed on
+what `'self'` means after that.
+
+**A draft saved to disk loses the font** and falls back to Georgia, which is on every
+platform worth caring about. That is the trade for not inlining ~270KB of base64 into
+every document, and the fallback stack is chosen so the saved copy still reads properly.
+The same applies to self-contained HTML uploads, which own their own styling anyway.
 
 ## Theming
 
@@ -143,16 +204,16 @@ Markdown drafts store only a rendered body fragment; the document shell is assem
 per request. So the theme is a **read-time** decision, and any of three levels can set
 it, in order of precedence:
 
-1. `?theme=dark` on the view URL â€” per view, per reader, no republishing
-2. `"theme": "dark"` in the upload body â€” pinned to that one draft
-3. `DRAFTBIN_THEME` â€” the server default
+1. `?theme=dark` on the view URL — per view, per reader, no republishing
+2. `"theme": "dark"` in the upload body — pinned to that one draft
+3. `DRAFTBIN_THEME` — the server default
 
 Each is `auto`, `light`, or `dark`. An unrecognised `?theme=` value falls back to the
 next level rather than erroring, since these URLs get hand-edited. `auto` follows the
 reader's OS via `prefers-color-scheme`; `light` and `dark` are unconditional.
 
 Because the shell is assembled at request time, editing the stylesheet also changes
-**already-published** drafts â€” no republishing needed.
+**already-published** drafts — no republishing needed.
 
 The contents list rides on the same property. It is read back out of the stored body at
 request time rather than recorded at upload, from the `h2` and `h3` anchors, and appears
@@ -170,8 +231,8 @@ Drafts are served with:
 
 ```
 Content-Security-Policy: sandbox allow-popups allow-popups-to-escape-sandbox;
-  default-src 'none'; style-src 'unsafe-inline'; img-src https: data:;
-  base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  default-src 'none'; style-src 'unsafe-inline'; font-src 'self' <base-url>;
+  img-src https: data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
 Cache-Control: no-store, private, must-revalidate
 Referrer-Policy: no-referrer
 X-Robots-Tag: noindex, nofollow, noarchive, nosnippet
@@ -179,23 +240,24 @@ X-Robots-Tag: noindex, nofollow, noarchive, nosnippet
 
 `default-src 'none'` is what actually prevents script execution; the `sandbox`
 directive adds opaque-origin isolation on top. That combination means no JavaScript,
-no external stylesheets, and no web fonts in published documents â€” inline `<style>`
-only. Mermaid diagrams and JS charts will not run.
+no external stylesheets, and no third-party web fonts in published documents — inline
+`<style>` only, and the one self-hosted face named by `font-src`. Mermaid diagrams and JS
+charts will not run.
 
 Markdown drafts get a second, independent barrier: raw HTML embedded in the markdown is
 filtered to an allowlist before it is stored, so a `<script>` or `<iframe>` becomes
-visible escaped text rather than a tag. That matters because the CSP is a *header* â€” a
+visible escaped text rather than a tag. That matters because the CSP is a *header* — a
 draft saved to disk and reopened from `file://` carries no CSP at all, and that saved
 copy is often the durable record. `<details>`, `<summary>`, inline SVG, tables, and
 ordinary formatting all pass through; event handlers and `javascript:` URLs do not.
-HTML uploads are **not** filtered â€” they are served byte for byte by definition, and
+HTML uploads are **not** filtered — they are served byte for byte by definition, and
 the CSP is their only barrier.
 
 `Referrer-Policy: no-referrer` is the non-obvious one. Without it, a reader clicking a
 link inside a draft leaks the draft's secret URL to that third party in the `Referer`
 header, which defeats the whole point of an unlisted URL.
 
-Every response carries those four headers, not just draft views â€” `GET /api/drafts`
+Every response carries those four headers, not just draft views — `GET /api/drafts`
 returns every live draft URL at once, so it is the last thing that should sit in a cache.
 Only the CSP is draft-specific.
 
@@ -221,7 +283,7 @@ Only the CSP is draft-specific.
 `DRAFTBIN_THEME` sets the default for markdown drafts that don't specify one and are
 viewed without `?theme=`. See [Theming](#theming) for the full precedence chain.
 
-`DRAFTBIN_TIMEZONE` applies only to dates rendered into pages a person reads â€” the
+`DRAFTBIN_TIMEZONE` applies only to dates rendered into pages a person reads — the
 expiry line at the foot of a draft and the expired page. API responses keep reporting
 UTC in ISO 8601, because a caller wants an unambiguous instant it can convert itself.
 
@@ -250,6 +312,10 @@ Metadata lives in SQLite and rendered documents live as files, both under
 `DRAFTBIN_DATA_DIR`. Requires SQLite 3.35+ (checked at startup) and Python 3.11+.
 
 ## Credit
+
+Draft ids are built from the [EFF short wordlist](https://www.eff.org/dice), CC BY 3.0
+US. Merriweather is under the SIL Open Font License; the text ships in
+`draftbin/static/fonts/OFL.txt`.
 
 Inspired by Postplan, Theo's static HTML draft host, and by
 [PatchPage](https://github.com/allisonmahmood/PatchPage), an open-source

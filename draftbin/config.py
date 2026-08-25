@@ -35,6 +35,11 @@ class Config:
         return ZoneInfo(self.timezone)
 
     @property
+    def cookies_are_secure(self) -> bool:
+        """A Secure cookie is dropped over plain http, which would break local dev."""
+        return self.public_base_url.startswith("https://")
+
+    @property
     def db_path(self) -> Path:
         return self.data_dir / "draftbin.sqlite3"
 
