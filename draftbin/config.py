@@ -1,6 +1,7 @@
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from draftbin.templates import THEMES
 
@@ -26,6 +27,12 @@ class Config:
     sweep_interval_seconds: int
     tombstone_retention_seconds: int = DEFAULT_TOMBSTONE_RETENTION_SECONDS
     theme: str = "auto"
+    timezone: str = "UTC"
+
+    @property
+    def display_zone(self) -> ZoneInfo:
+        """Only for dates shown to a reader; the API keeps reporting UTC."""
+        return ZoneInfo(self.timezone)
 
     @property
     def db_path(self) -> Path:
@@ -66,6 +73,14 @@ def load_config() -> Config:
     if theme not in THEMES:
         raise ConfigError(f"DRAFTBIN_THEME must be one of {', '.join(THEMES)}, got {theme!r}")
 
+    timezone_name = os.environ.get("DRAFTBIN_TIMEZONE", "UTC").strip() or "UTC"
+    try:
+        ZoneInfo(timezone_name)
+    except (ZoneInfoNotFoundError, ValueError) as error:
+        raise ConfigError(
+            f"DRAFTBIN_TIMEZONE must be an IANA name like America/Denver, got {timezone_name!r}"
+        ) from error
+
     default_ttl = positive_int_env("DRAFTBIN_DEFAULT_TTL_SECONDS", DEFAULT_TTL_SECONDS)
     max_ttl = positive_int_env("DRAFTBIN_MAX_TTL_SECONDS", DEFAULT_MAX_TTL_SECONDS)
     if default_ttl > max_ttl:
@@ -90,4 +105,5 @@ def load_config() -> Config:
             "DRAFTBIN_TOMBSTONE_RETENTION_SECONDS", DEFAULT_TOMBSTONE_RETENTION_SECONDS
         ),
         theme=theme,
+        timezone=timezone_name,
     )

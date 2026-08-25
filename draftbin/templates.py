@@ -1,5 +1,6 @@
-from datetime import datetime, timezone
+from datetime import datetime
 from html import escape
+from zoneinfo import ZoneInfo
 
 from pygments.formatters import HtmlFormatter
 
@@ -244,11 +245,9 @@ def theme_css(theme: str) -> str:
     )
 
 
-def format_timestamp(epoch_seconds: int) -> str:
-    return (
-        datetime.fromtimestamp(epoch_seconds, tz=timezone.utc)
-        .strftime("%Y-%m-%d %H:%M UTC")
-    )
+def format_timestamp(epoch_seconds: int, zone: ZoneInfo) -> str:
+    """Reader-facing dates only. The API keeps reporting UTC, which is what machines want."""
+    return datetime.fromtimestamp(epoch_seconds, tz=zone).strftime("%Y-%m-%d %H:%M %Z")
 
 
 def render_page(title: str, body_html: str, theme: str) -> str:
@@ -288,10 +287,12 @@ def render_contents(headings: list[Heading]) -> str:
     )
 
 
-def render_markdown_document(body_html: str, title: str, expires_at: int, theme: str) -> str:
+def render_markdown_document(
+    body_html: str, title: str, expires_at: int, theme: str, zone: ZoneInfo
+) -> str:
     meta = (
         '<p class="draft-meta">Published with draftbin &middot; link expires '
-        f"{format_timestamp(expires_at)}</p>"
+        f"{format_timestamp(expires_at, zone)}</p>"
     )
     contents = render_contents(outline(body_html))
     return render_page(title, f"{contents}{body_html}\n{meta}", theme)
@@ -330,7 +331,7 @@ and cannot be recovered &mdash; publish again to get a new link.</p>
     )
 
 
-def render_expired(theme: str, removed_at: int) -> str:
+def render_expired(theme: str, removed_at: int, zone: ZoneInfo) -> str:
     """Says the link worked once, which "not found" cannot: a dead link then reads as
     expired rather than as a typo somewhere between here and the note it came from."""
     return render_page(
@@ -338,7 +339,7 @@ def render_expired(theme: str, removed_at: int) -> str:
         f"""
 <h1>Expired</h1>
 <p>This draft was published and is no longer available. It was removed on
-{format_timestamp(removed_at)}.</p>
+{format_timestamp(removed_at, zone)}.</p>
 <p>Expired drafts are deleted and cannot be recovered &mdash; publish again to get a
 new link.</p>
 """,

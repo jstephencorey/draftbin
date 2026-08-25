@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
+from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
@@ -105,7 +106,7 @@ def prepare_html(body: HtmlUpload) -> Prepared:
     )
 
 
-def prepare_markdown(body: MarkdownUpload, expires_at: int) -> Prepared:
+def prepare_markdown(body: MarkdownUpload, expires_at: int, zone: ZoneInfo) -> Prepared:
     if body.theme is not None and body.theme not in THEMES:
         raise HTTPException(status_code=422, detail=f"theme must be one of {', '.join(THEMES)}.")
 
@@ -121,7 +122,7 @@ def prepare_markdown(body: MarkdownUpload, expires_at: int) -> Prepared:
         stored=rendered.html,
         # The auto palette carries both light and dark rules, so it bounds every theme.
         served_bytes=len(
-            render_markdown_document(rendered.html, title, expires_at, "auto").encode("utf-8")
+            render_markdown_document(rendered.html, title, expires_at, "auto", zone).encode("utf-8")
         ),
         title=title,
         filename=filename,
@@ -319,7 +320,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     def upload_markdown(body: MarkdownUpload) -> dict:
         now = int(time.time())
         expires_at = resolve_expiry(body.ttl_seconds, now)
-        return publish(prepare_markdown(body, expires_at), expires_at, now)
+        return publish(prepare_markdown(body, expires_at, config.display_zone), expires_at, now)
 
     def republish(existing: Draft, prepared: Prepared, expires_at: int, now: int) -> dict:
         draft = as_draft(existing.id, prepared, expires_at, existing.created_at)
@@ -351,7 +352,8 @@ def create_app(config: Config | None = None) -> FastAPI:
         now = int(time.time())
         existing = require_live_draft(draft_id, now)
         expires_at = resolve_expiry(body.ttl_seconds, now)
-        return republish(existing, prepare_markdown(body, expires_at), expires_at, now)
+        prepared = prepare_markdown(body, expires_at, config.display_zone)
+        return republish(existing, prepared, expires_at, now)
 
     @app.patch("/api/drafts/{draft_id}", dependencies=[Depends(require_token)])
     def extend_draft(draft_id: str, body: ExpiryUpdate) -> dict:
@@ -379,7 +381,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         removed_at = database.removed_at(draft_id, now) if is_draft_id(draft_id) else None
         if removed_at is None:
             return render_not_found(theme)
-        return render_expired(theme, removed_at)
+        return render_expired(theme, removed_at, config.display_zone)
 
     @app.api_route("/d/{draft_id}", methods=["GET", "HEAD"], response_class=HTMLResponse)
     def view_draft(draft_id: str, theme: str | None = None) -> HTMLResponse:
@@ -399,7 +401,11 @@ def create_app(config: Config | None = None) -> FastAPI:
             return HTMLResponse(stored, headers=DRAFT_HEADERS)
         return HTMLResponse(
             render_markdown_document(
-                stored, draft.title, draft.expires_at, resolve_theme(theme, draft.theme)
+                stored,
+                draft.title,
+                draft.expires_at,
+                resolve_theme(theme, draft.theme),
+                config.display_zone,
             ),
             headers=DRAFT_HEADERS,
         )

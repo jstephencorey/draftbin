@@ -187,6 +187,7 @@ Only the CSP is draft-specific.
 | `DRAFTBIN_TOKEN`                  | _required_              | Bearer token for uploads; 20+ chars         |
 | `DRAFTBIN_PUBLIC_BASE_URL`        | `http://localhost:8000` | Origin returned URLs are built from         |
 | `DRAFTBIN_THEME`                  | `auto`                  | Default theme; `?theme=` overrides per view |
+| `DRAFTBIN_TIMEZONE`               | `UTC`                   | IANA zone for dates shown to readers        |
 | `DRAFTBIN_DATA_DIR`               | `.local`                | `/data` in the container                    |
 | `DRAFTBIN_DEFAULT_TTL_SECONDS`    | `86400`                 | 24 hours                                    |
 | `DRAFTBIN_MAX_TTL_SECONDS`        | `604800`                | 7 days; caps per-upload overrides           |
@@ -196,6 +197,10 @@ Only the CSP is draft-specific.
 
 `DRAFTBIN_THEME` sets the default for markdown drafts that don't specify one and are
 viewed without `?theme=`. See [Theming](#theming) for the full precedence chain.
+
+`DRAFTBIN_TIMEZONE` applies only to dates rendered into pages a person reads — the
+expiry line at the foot of a draft and the expired page. API responses keep reporting
+UTC in ISO 8601, because a caller wants an unambiguous instant it can convert itself.
 
 Generate a token with:
 
