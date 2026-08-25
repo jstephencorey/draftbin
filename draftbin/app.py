@@ -101,6 +101,9 @@ def prepare_html(body: HtmlUpload) -> Prepared:
 
 
 def prepare_markdown(body: MarkdownUpload, expires_at: int) -> Prepared:
+    if body.theme is not None and body.theme not in THEMES:
+        raise HTTPException(status_code=422, detail=f"theme must be one of {', '.join(THEMES)}.")
+
     filename = safe_filename(body.filename)
     rendered = render_markdown(body.markdown)
     title = (
@@ -308,13 +311,40 @@ def create_app(config: Config | None = None) -> FastAPI:
     @app.post("/api/upload/markdown", status_code=201, dependencies=[Depends(require_token)])
     def upload_markdown(body: MarkdownUpload) -> dict:
         now = int(time.time())
-        if body.theme is not None and body.theme not in THEMES:
-            raise HTTPException(
-                status_code=422, detail=f"theme must be one of {', '.join(THEMES)}."
-            )
-
         expires_at = resolve_expiry(body.ttl_seconds, now)
         return publish(prepare_markdown(body, expires_at), expires_at, now)
+
+    def republish(existing: Draft, prepared: Prepared, expires_at: int, now: int) -> dict:
+        draft = as_draft(existing.id, prepared, expires_at, existing.created_at)
+        previous = store.read(draft.id)
+        store.write(draft.id, prepared.stored)
+        try:
+            database.replace(draft)
+        except Exception:
+            if previous is not None:
+                store.write(draft.id, previous)
+            raise
+        return draft_summary(draft, config, now)
+
+    def find_replaceable(draft_id: str, now: int) -> Draft:
+        """Expired ids are gone for good; reviving one would resurrect a link that leaked."""
+        existing = database.find_live(draft_id, now) if is_draft_id(draft_id) else None
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Draft not found.")
+        return existing
+
+    @app.put("/api/drafts/{draft_id}/html", dependencies=[Depends(require_token)])
+    def replace_with_html(draft_id: str, body: HtmlUpload) -> dict:
+        now = int(time.time())
+        existing = find_replaceable(draft_id, now)
+        return republish(existing, prepare_html(body), resolve_expiry(body.ttl_seconds, now), now)
+
+    @app.put("/api/drafts/{draft_id}/markdown", dependencies=[Depends(require_token)])
+    def replace_with_markdown(draft_id: str, body: MarkdownUpload) -> dict:
+        now = int(time.time())
+        existing = find_replaceable(draft_id, now)
+        expires_at = resolve_expiry(body.ttl_seconds, now)
+        return republish(existing, prepare_markdown(body, expires_at), expires_at, now)
 
     @app.get("/api/drafts", dependencies=[Depends(require_token)])
     def list_drafts() -> dict:

@@ -40,7 +40,21 @@ Both deletion paths drop the database row before the file, so a crash in between
 strand a file that nothing revisits — sweeping is driven off rows, and that row is gone.
 Startup reconciles the two by deleting any stored file with no matching row.
 
-Republishing mints a **new** ID. A link that leaked before it expired stays dead.
+Publishing again mints a **new** ID. A link that leaked before it expired stays dead.
+
+## Revising a draft
+
+`PUT /api/drafts/{id}/markdown` (or `/html`) swaps the body of a live draft and keeps
+its ID, so a link already written into a note survives the revision. It takes the same
+fields as the matching upload endpoint, and a draft may change format on the way — a
+markdown draft replaced with HTML stops being themeable.
+
+Replacing **resets the expiry**, exactly as publishing again would; otherwise a revision
+made shortly before the deadline would produce a link that died minutes later. The
+server maximum still caps each window.
+
+An expired ID cannot be replaced — that would revive a link that may already have
+leaked. Publish a new draft instead.
 
 ## API
 
@@ -50,6 +64,8 @@ Uploads and management need `Authorization: Bearer $DRAFTBIN_TOKEN`. Viewing doe
 | -------- | ---------------------- | ----------------------------------------- |
 | `POST`   | `/api/upload`          | Publish a prebuilt HTML document          |
 | `POST`   | `/api/upload/markdown` | Render markdown, then publish it          |
+| `PUT`    | `/api/drafts/{id}/html`     | Replace a draft, keeping its URL     |
+| `PUT`    | `/api/drafts/{id}/markdown` | Replace a draft, keeping its URL     |
 | `GET`    | `/api/drafts`          | List live drafts with their expiry times  |
 | `DELETE` | `/api/drafts/{id}`     | Delete a draft before it expires          |
 | `GET`    | `/d/{id}?theme=`       | View a draft (public, unlisted, expiring) |

@@ -92,6 +92,28 @@ class Database:
                 ),
             )
 
+    def replace(self, draft: Draft) -> None:
+        """Everything but the id and the original publication date is overwritten."""
+        with self.connect() as connection:
+            connection.execute(
+                """
+                UPDATE drafts SET
+                    title = ?, filename = ?, source_format = ?, theme = ?,
+                    expires_at = ?, size_bytes = ?, content_hash = ?
+                WHERE id = ?
+                """,
+                (
+                    draft.title,
+                    draft.filename,
+                    draft.source_format,
+                    draft.theme,
+                    draft.expires_at,
+                    draft.size_bytes,
+                    draft.content_hash,
+                    draft.id,
+                ),
+            )
+
     def find_live(self, draft_id: str, now: int) -> Draft | None:
         with self.connect() as connection:
             row = connection.execute(
