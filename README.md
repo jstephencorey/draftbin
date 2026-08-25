@@ -36,6 +36,10 @@ Expiry is enforced two ways, and both matter:
 - **By a sweeper**, which deletes rows and files. This reclaims disk and limits what a
   later compromise of the host would expose.
 
+Both deletion paths drop the database row before the file, so a crash in between would
+strand a file that nothing revisits — sweeping is driven off rows, and that row is gone.
+Startup reconciles the two by deleting any stored file with no matching row.
+
 Republishing mints a **new** ID. A link that leaked before it expired stays dead.
 
 ## API

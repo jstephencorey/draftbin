@@ -105,6 +105,17 @@ def create_app(config: Config | None = None) -> FastAPI:
             store.delete(draft_id)
         return len(expired_ids)
 
+    def delete_orphaned_files() -> int:
+        """Both delete paths drop the row first, so dying in between strands the file.
+
+        Nothing would ever revisit it: sweeping is driven off rows, and this one's row
+        is already gone. Reconciling against the table at startup is the only way back.
+        """
+        orphans = store.stored_ids() - database.all_ids()
+        for draft_id in orphans:
+            store.delete(draft_id)
+        return len(orphans)
+
     async def sweep_forever() -> None:
         while True:
             await asyncio.sleep(config.sweep_interval_seconds)
@@ -122,6 +133,9 @@ def create_app(config: Config | None = None) -> FastAPI:
         store.initialize()
         store.discard_staged_writes()
         await asyncio.to_thread(sweep_expired)
+        orphaned = await asyncio.to_thread(delete_orphaned_files)
+        if orphaned:
+            logger.warning("deleted orphaned draft files", extra={"count": orphaned})
         sweeper = asyncio.create_task(sweep_forever())
         try:
             yield

@@ -106,6 +106,11 @@ class Database:
             ).fetchall()
         return [Draft(**row) for row in rows]
 
+    def all_ids(self) -> set[str]:
+        with self.connect() as connection:
+            rows = connection.execute("SELECT id FROM drafts").fetchall()
+        return {row["id"] for row in rows}
+
     def delete(self, draft_id: str) -> bool:
         with self.connect() as connection:
             cursor = connection.execute("DELETE FROM drafts WHERE id = ?", (draft_id,))

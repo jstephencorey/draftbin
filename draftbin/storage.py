@@ -25,6 +25,9 @@ class HtmlStore:
         staged.write_text(html, encoding="utf-8")
         os.replace(staged, destination)
 
+    def stored_ids(self) -> set[str]:
+        return {path.stem for path in self.root.glob("*.html")}
+
     def discard_staged_writes(self) -> None:
         for path in self.root.glob(f"*{TEMPORARY_SUFFIX}"):
             path.unlink(missing_ok=True)
