@@ -64,6 +64,18 @@ extended either.
 Both are ways to avoid rewriting the note that points at a draft; neither weakens expiry,
 because every window is still bounded by `DRAFTBIN_MAX_TTL_SECONDS`.
 
+## When a link is dead
+
+Following a dead link gives a page that distinguishes the two cases: an ID that once
+worked reads "no longer available … removed on _date_", and an ID that never existed
+reads "does not exist". Without that split, a stale link in a note is indistinguishable
+from a typo, and the reflex is to go looking for a bug that isn't there.
+
+That is what the `tombstones` table is for. It holds an ID and a timestamp, never
+content, and rows are purged after `DRAFTBIN_TOMBSTONE_RETENTION_SECONDS`. The trade is
+small but real: for that window, the server confirms to anyone holding a URL that the ID
+was once a draft. Set the retention to something short if that is not a trade you want.
+
 ## API
 
 Uploads and management need `Authorization: Bearer $DRAFTBIN_TOKEN`. Viewing does not.
@@ -180,6 +192,7 @@ Only the CSP is draft-specific.
 | `DRAFTBIN_MAX_TTL_SECONDS`        | `604800`                | 7 days; caps per-upload overrides           |
 | `DRAFTBIN_MAX_UPLOAD_BYTES`       | `2097152`               | 2 MiB; bounds the request and the document  |
 | `DRAFTBIN_SWEEP_INTERVAL_SECONDS` | `300`                   | How often expired drafts are deleted        |
+| `DRAFTBIN_TOMBSTONE_RETENTION_SECONDS` | `2592000`          | 30 days; how long a dead ID says "expired"  |
 
 `DRAFTBIN_THEME` sets the default for markdown drafts that don't specify one and are
 viewed without `?theme=`. See [Theming](#theming) for the full precedence chain.

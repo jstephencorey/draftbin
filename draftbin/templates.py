@@ -328,3 +328,19 @@ and cannot be recovered &mdash; publish again to get a new link.</p>
 """,
         theme,
     )
+
+
+def render_expired(theme: str, removed_at: int) -> str:
+    """Says the link worked once, which "not found" cannot: a dead link then reads as
+    expired rather than as a typo somewhere between here and the note it came from."""
+    return render_page(
+        "Expired",
+        f"""
+<h1>Expired</h1>
+<p>This draft was published and is no longer available. It was removed on
+{format_timestamp(removed_at)}.</p>
+<p>Expired drafts are deleted and cannot be recovered &mdash; publish again to get a
+new link.</p>
+""",
+        theme,
+    )

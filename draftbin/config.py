@@ -8,6 +8,7 @@ DEFAULT_TTL_SECONDS = 24 * 60 * 60
 DEFAULT_MAX_TTL_SECONDS = 7 * 24 * 60 * 60
 DEFAULT_MAX_UPLOAD_BYTES = 2 * 1024 * 1024
 DEFAULT_SWEEP_INTERVAL_SECONDS = 5 * 60
+DEFAULT_TOMBSTONE_RETENTION_SECONDS = 30 * 24 * 60 * 60
 
 
 class ConfigError(RuntimeError):
@@ -23,6 +24,7 @@ class Config:
     max_ttl_seconds: int
     max_upload_bytes: int
     sweep_interval_seconds: int
+    tombstone_retention_seconds: int = DEFAULT_TOMBSTONE_RETENTION_SECONDS
     theme: str = "auto"
 
     @property
@@ -83,6 +85,9 @@ def load_config() -> Config:
         max_upload_bytes=positive_int_env("DRAFTBIN_MAX_UPLOAD_BYTES", DEFAULT_MAX_UPLOAD_BYTES),
         sweep_interval_seconds=positive_int_env(
             "DRAFTBIN_SWEEP_INTERVAL_SECONDS", DEFAULT_SWEEP_INTERVAL_SECONDS
+        ),
+        tombstone_retention_seconds=positive_int_env(
+            "DRAFTBIN_TOMBSTONE_RETENTION_SECONDS", DEFAULT_TOMBSTONE_RETENTION_SECONDS
         ),
         theme=theme,
     )

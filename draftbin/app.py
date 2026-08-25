@@ -20,6 +20,7 @@ from draftbin.markdown_render import render_markdown
 from draftbin.storage import HtmlStore
 from draftbin.templates import (
     THEMES,
+    render_expired,
     render_landing,
     render_markdown_document,
     render_not_found,
@@ -156,9 +157,11 @@ def create_app(config: Config | None = None) -> FastAPI:
     store = HtmlStore(config.drafts_dir)
 
     def sweep_expired() -> int:
-        expired_ids = database.take_expired_ids(int(time.time()))
+        now = int(time.time())
+        expired_ids = database.take_expired_ids(now)
         for draft_id in expired_ids:
             store.delete(draft_id)
+        database.purge_tombstones(now - config.tombstone_retention_seconds)
         return len(expired_ids)
 
     def delete_orphaned_files() -> int:
@@ -366,10 +369,17 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     @app.delete("/api/drafts/{draft_id}", dependencies=[Depends(require_token)])
     def delete_draft(draft_id: str) -> dict:
-        if not is_draft_id(draft_id) or not database.delete(draft_id):
+        now = int(time.time())
+        if not is_draft_id(draft_id) or not database.delete(draft_id, now):
             raise HTTPException(status_code=404, detail="Draft not found.")
         store.delete(draft_id)
         return {"ok": True}
+
+    def gone_page(draft_id: str, theme: str, now: int) -> str:
+        removed_at = database.removed_at(draft_id, now) if is_draft_id(draft_id) else None
+        if removed_at is None:
+            return render_not_found(theme)
+        return render_expired(theme, removed_at)
 
     @app.api_route("/d/{draft_id}", methods=["GET", "HEAD"], response_class=HTMLResponse)
     def view_draft(draft_id: str, theme: str | None = None) -> HTMLResponse:
@@ -380,7 +390,7 @@ def create_app(config: Config | None = None) -> FastAPI:
             if draft:
                 logger.error("draft row without stored body", extra={"draft_id": draft.id})
             return HTMLResponse(
-                render_not_found(resolve_theme(theme, None)),
+                gone_page(draft_id, resolve_theme(theme, None), now),
                 status_code=404,
                 headers=PRIVATE_HEADERS,
             )
