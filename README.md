@@ -16,8 +16,8 @@ curl -X POST https://drafts.example.com/api/upload/markdown \
 ```
 
 Markdown is rendered to a styled standalone document — tables, footnotes, task lists,
-definition lists, syntax-highlighted code, light/dark palettes, and a print stylesheet.
-HTML uploads are stored and served byte for byte.
+definition lists, syntax-highlighted code, light/dark palettes, a collapsible contents
+list, and a print stylesheet. HTML uploads are stored and served byte for byte.
 
 ## Why links expire
 
@@ -93,6 +93,12 @@ reader's OS via `prefers-color-scheme`; `light` and `dark` are unconditional.
 
 Because the shell is assembled at request time, editing the stylesheet also changes
 **already-published** drafts — no republishing needed.
+
+The contents list rides on the same property. It is read back out of the stored body at
+request time rather than recorded at upload, from the `h2` and `h3` anchors, and appears
+only once a document has three or more of them. `h1` is the title and `h4` is too fine
+to navigate by, so neither is listed. It is a `<details>` element, since the CSP rules
+out any JavaScript, and it is hidden when printing.
 
 **HTML uploads are not themeable.** They are stored and served byte for byte, so
 `?theme=` is ignored on them; the document you uploaded owns its own styling. The

@@ -3,6 +3,11 @@ from html import escape
 
 from pygments.formatters import HtmlFormatter
 
+from draftbin.html_document import Heading, outline
+
+# Below this a contents list is longer than the navigation it saves.
+MINIMUM_OUTLINE_ENTRIES = 3
+
 LIGHT_VARS = """
   --bg: #fdfdfc;
   --fg: #1f2328;
@@ -173,6 +178,31 @@ hr {
   color: var(--muted);
 }
 
+.draft-contents {
+  margin: 0 0 2.5em;
+  padding: 0.6em 1.1em;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  font-size: 0.92em;
+}
+
+.draft-contents summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.draft-contents ul {
+  list-style: none;
+  margin: 0.7em 0 0.2em;
+  padding-left: 0;
+}
+
+.draft-contents li { margin: 0.25em 0; }
+.draft-contents li.depth-3 { padding-left: 1.3em; }
+.draft-contents a { text-decoration: none; }
+.draft-contents a:hover { text-decoration: underline; }
+
 .draft-meta {
   margin-top: 4em;
   padding-top: 1em;
@@ -186,7 +216,7 @@ hr {
   main { max-width: none; padding: 0; }
   pre, code, blockquote, th { background: none; }
   pre, blockquote { border: 1px solid #ccc; }
-  .draft-meta, .heading-anchor { display: none; }
+  .draft-meta, .heading-anchor, .draft-contents { display: none; }
 }
 """
 
@@ -243,12 +273,28 @@ def render_page(title: str, body_html: str, theme: str) -> str:
 """
 
 
+def render_contents(headings: list[Heading]) -> str:
+    """A disclosure element, because navigation has to work with no JavaScript at all."""
+    if len(headings) < MINIMUM_OUTLINE_ENTRIES:
+        return ""
+    items = "\n".join(
+        f'<li class="depth-{heading.level}">'
+        f'<a href="#{escape(heading.anchor, quote=True)}">{escape(heading.text)}</a></li>'
+        for heading in headings
+    )
+    return (
+        '<details class="draft-contents" open><summary>Contents</summary>\n'
+        f"<ul>\n{items}\n</ul>\n</details>\n"
+    )
+
+
 def render_markdown_document(body_html: str, title: str, expires_at: int, theme: str) -> str:
     meta = (
         '<p class="draft-meta">Published with draftbin &middot; link expires '
         f"{format_timestamp(expires_at)}</p>"
     )
-    return render_page(title, f"{body_html}\n{meta}", theme)
+    contents = render_contents(outline(body_html))
+    return render_page(title, f"{contents}{body_html}\n{meta}", theme)
 
 
 def render_landing(public_base_url: str, default_ttl_seconds: int, theme: str) -> str:
