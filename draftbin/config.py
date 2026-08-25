@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from draftbin.templates import THEMES
 
-DEFAULT_TTL_SECONDS = 24 * 60 * 60
+DEFAULT_TTL_SECONDS = 48 * 60 * 60
 DEFAULT_MAX_TTL_SECONDS = 7 * 24 * 60 * 60
 DEFAULT_MAX_UPLOAD_BYTES = 2 * 1024 * 1024
 DEFAULT_SWEEP_INTERVAL_SECONDS = 5 * 60
@@ -33,6 +33,11 @@ class Config:
     def display_zone(self) -> ZoneInfo:
         """Only for dates shown to a reader; the API keeps reporting UTC."""
         return ZoneInfo(self.timezone)
+
+    @property
+    def cookies_are_secure(self) -> bool:
+        """A Secure cookie is dropped over plain http, which would break local dev."""
+        return self.public_base_url.startswith("https://")
 
     @property
     def db_path(self) -> Path:

@@ -9,6 +9,8 @@ dependencies = [
     "markdown-it-py>=3.0",
     "mdit-py-plugins>=0.4",
     "pygments>=2.18",
+    # Form parsing for the homepage paste box; FastAPI needs it for Form(...).
+    "python-multipart>=0.0.9",
     # zoneinfo has no database of its own on Windows, and slim images may not ship one.
     "tzdata>=2024.1",
 ]
@@ -25,6 +27,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["draftbin*"]
+
+[tool.setuptools.package-data]
+draftbin = ["static/fonts/*.woff2", "static/fonts/OFL.txt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

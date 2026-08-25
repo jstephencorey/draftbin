@@ -3,7 +3,7 @@
 [![tests](https://github.com/jstephencorey/draftbin/actions/workflows/tests.yml/badge.svg)](https://github.com/jstephencorey/draftbin/actions/workflows/tests.yml)
 
 Self-hosted ephemeral publishing for agent-generated documents. Post HTML or markdown,
-get back an unlisted URL you can open anywhere, and have it delete itself after a day.
+get back an unlisted URL you can open anywhere, and have it delete itself in two days.
 
 Built for the workflow where a coding agent produces a plan, an analysis, or a day's
 writing, and you want to _read_ it in a browser instead of scrolling a terminal.
@@ -14,12 +14,35 @@ curl -X POST https://drafts.example.com/api/upload/markdown \
   -H "Content-Type: application/json" \
   -d '{"markdown": "# The plan\n\nStep one.", "filename": "plan.md"}'
 
-{"id":"UH4jXBAR958NTaH1e0Blhg","url":"https://drafts.example.com/d/UH4jXBAR958NTaH1e0Blhg", ...}
+{"id":"broad-half","url":"https://drafts.example.com/d/broad-half", ...}
 ```
 
 Markdown is rendered to a styled standalone document — tables, footnotes, task lists,
 definition lists, syntax-highlighted code, light/dark palettes, a collapsible contents
 list, and a print stylesheet. HTML uploads are stored and served byte for byte.
+
+There is also a paste box on the homepage, for the times you want to publish something
+without a terminal in front of you.
+
+## Readable URLs
+
+A draft id is two words from the [EFF short wordlist][eff] — `broad-half`, `velvet-sage`.
+The wordlist earns its place: nothing over five characters, no word a prefix of another,
+and near-homophones already removed, so an id survives being read down a phone or typed
+on one. That is the whole point; the common move here is to publish on a laptop, text
+yourself the link, and open it on a phone.
+
+[eff]: https://www.eff.org/dice
+
+The trade is keyspace. Two words is about 1.7 million combinations, against 128 bits for
+the ids minted before the change, and that is small enough to enumerate. It is not what
+keeps a draft private — expiry is, and the reasoning below is unchanged. Do not publish
+anything whose exposure you would actually mind.
+
+Ids are checked against live drafts **and** tombstones before being handed out, so an id
+retires permanently. Reissuing one would silently point a link somebody still holds at
+unrelated content. Ids minted before the switch still resolve, so links already written
+into notes keep working.
 
 ## Why links expire
 
@@ -93,6 +116,9 @@ Uploads and management need `Authorization: Bearer $DRAFTBIN_TOKEN`. Viewing doe
 | `DELETE` | `/api/drafts/{id}`     | Delete a draft before it expires          |
 | `GET`    | `/d/{id}?theme=`       | View a draft (public, unlisted, expiring) |
 | `HEAD`   | `/d/{id}`              | Check a link without fetching the body    |
+| `GET`    | `/`                    | Landing page and paste box                |
+| `POST`   | `/paste`               | Publish from the paste box (form-encoded) |
+| `GET`    | `/static/fonts/{file}` | The reading face (public, cacheable)      |
 | `GET`    | `/healthz`             | Liveness probe                            |
 
 `DRAFTBIN_MAX_UPLOAD_BYTES` is enforced twice: against `Content-Length` before the
@@ -116,6 +142,61 @@ Markdown titles resolve in order: explicit `title`, then the first `# ` heading,
 the filename stem, then `Untitled draft`. HTML uploads have no `title` field — the
 document names itself, so the `<title>` element is read out of it, falling back to the
 filename stem and then `Untitled draft`.
+
+## The paste box
+
+`GET /` shows a textarea, an optional title, and a token field; `POST /paste` renders the
+text as markdown, publishes it, and redirects you to the new draft, so the URL lands in
+the address bar ready to share.
+
+A form cannot send an `Authorization` header without JavaScript, and the CSP rules that
+out, so the token arrives in a field once and then rides in a cookie:
+
+```
+Set-Cookie: draftbin_token=…; Max-Age=2592000; Path=/; HttpOnly; SameSite=Strict; Secure
+```
+
+`SameSite=Strict` is the one doing real work. Without it any web page could POST a form
+at `/paste` and the browser would attach the cookie, letting a third party publish to
+your bin; Strict withholds it on every cross-site request, top-level POSTs included.
+`HttpOnly` is belt-and-braces given there is no JavaScript anywhere here. `Secure` is set
+only when `DRAFTBIN_PUBLIC_BASE_URL` is `https://`, because a Secure cookie is dropped
+over plain http and that would break local development.
+
+Two things to be aware of. The cookie **is** the upload token, so it now exists in a
+browser's cookie jar as well as wherever you keep it, and anyone holding your unlocked
+phone can publish. And rotating the server token leaves a stale cookie behind — the next
+paste answers `401`, clears the cookie, and shows the token field again rather than
+looping.
+
+The redirect is relative, so whichever hostname you arrived on is the one you keep.
+
+## Typography
+
+Drafts are set in [Merriweather][mw], served from this origin rather than from a font
+CDN. A `<link>` to Google Fonts would be blocked by `default-src 'none'` outright, and if
+it weren't it would report every draft you open to a third party. Shipping the files is
+also the only way the face renders on a phone, where neither Merriweather nor Garamond is
+installed.
+
+[mw]: https://github.com/SorkinType/Merriweather
+
+Both faces are variable across the weight axis, so one file per style covers regular and
+bold. `latin` and `latin-ext` are split on `unicode-range`, so a document with no
+accented characters never fetches the ext files.
+
+This is the one part of a draft worth caching, and it is served
+`public, max-age=31536000, immutable` while everything else stays `no-store`. Only the
+filenames in `fonts.py` resolve, so the route cannot be walked out of its folder.
+
+`font-src` names the origin explicitly as well as `'self'`, because the `sandbox`
+directive puts the document on an opaque origin and browsers have not always agreed on
+what `'self'` means after that.
+
+**A draft saved to disk loses the font** and falls back to Georgia, which is on every
+platform worth caring about. That is the trade for not inlining ~270KB of base64 into
+every document, and the fallback stack is chosen so the saved copy still reads properly.
+The same applies to self-contained HTML uploads, which own their own styling anyway.
 
 ## Theming
 
@@ -150,8 +231,8 @@ Drafts are served with:
 
 ```
 Content-Security-Policy: sandbox allow-popups allow-popups-to-escape-sandbox;
-  default-src 'none'; style-src 'unsafe-inline'; img-src https: data:;
-  base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  default-src 'none'; style-src 'unsafe-inline'; font-src 'self' <base-url>;
+  img-src https: data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
 Cache-Control: no-store, private, must-revalidate
 Referrer-Policy: no-referrer
 X-Robots-Tag: noindex, nofollow, noarchive, nosnippet
@@ -159,8 +240,9 @@ X-Robots-Tag: noindex, nofollow, noarchive, nosnippet
 
 `default-src 'none'` is what actually prevents script execution; the `sandbox`
 directive adds opaque-origin isolation on top. That combination means no JavaScript,
-no external stylesheets, and no web fonts in published documents — inline `<style>`
-only. Mermaid diagrams and JS charts will not run.
+no external stylesheets, and no third-party web fonts in published documents — inline
+`<style>` only, and the one self-hosted face named by `font-src`. Mermaid diagrams and JS
+charts will not run.
 
 Markdown drafts get a second, independent barrier: raw HTML embedded in the markdown is
 filtered to an allowlist before it is stored, so a `<script>` or `<iframe>` becomes
@@ -192,7 +274,7 @@ Only the CSP is draft-specific.
 | `DRAFTBIN_THEME`                  | `auto`                  | Default theme; `?theme=` overrides per view |
 | `DRAFTBIN_TIMEZONE`               | `UTC`                   | IANA zone for dates shown to readers        |
 | `DRAFTBIN_DATA_DIR`               | `.local`                | `/data` in the container                    |
-| `DRAFTBIN_DEFAULT_TTL_SECONDS`    | `86400`                 | 24 hours                                    |
+| `DRAFTBIN_DEFAULT_TTL_SECONDS`    | `172800`                | 48 hours                                    |
 | `DRAFTBIN_MAX_TTL_SECONDS`        | `604800`                | 7 days; caps per-upload overrides           |
 | `DRAFTBIN_MAX_UPLOAD_BYTES`       | `2097152`               | 2 MiB; bounds the request and the document  |
 | `DRAFTBIN_SWEEP_INTERVAL_SECONDS` | `300`                   | How often expired drafts are deleted        |
@@ -230,6 +312,10 @@ Metadata lives in SQLite and rendered documents live as files, both under
 `DRAFTBIN_DATA_DIR`. Requires SQLite 3.35+ (checked at startup) and Python 3.11+.
 
 ## Credit
+
+Draft ids are built from the [EFF short wordlist](https://www.eff.org/dice), CC BY 3.0
+US. Merriweather is under the SIL Open Font License; the text ships in
+`draftbin/static/fonts/OFL.txt`.
 
 Inspired by Postplan, Theo's static HTML draft host, and by
 [PatchPage](https://github.com/allisonmahmood/PatchPage), an open-source

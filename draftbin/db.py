@@ -143,6 +143,24 @@ class Database:
             ).fetchall()
         return [Draft(**row) for row in rows]
 
+    def id_in_use(self, draft_id: str) -> bool:
+        """Tombstones count as in use, so an id is never handed out twice.
+
+        Reissuing one would silently point a link somebody still holds at unrelated
+        content. Only matters now that ids are short enough to collide at all.
+        """
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT 1 FROM drafts WHERE id = ?
+                UNION ALL
+                SELECT 1 FROM tombstones WHERE id = ?
+                LIMIT 1
+                """,
+                (draft_id, draft_id),
+            ).fetchone()
+        return row is not None
+
     def all_ids(self) -> set[str]:
         with self.connect() as connection:
             rows = connection.execute("SELECT id FROM drafts").fetchall()

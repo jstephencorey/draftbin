@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from draftbin.app import create_app
 from draftbin.config import ConfigError, load_config
-from draftbin.templates import theme_css
+from draftbin.templates import DARK_VARS, LIGHT_VARS, theme_css
 from tests.conftest import AUTH, TOKEN
 
 
@@ -27,14 +27,14 @@ def test_dark_theme_is_unconditional(config):
     html = published_html(dataclasses.replace(config, theme="dark"))
     assert "color-scheme: dark" in html
     assert "prefers-color-scheme" not in html
-    assert "#16181d" in html
+    assert DARK_VARS.strip() in html
 
 
 def test_light_theme_is_unconditional(config):
     html = published_html(dataclasses.replace(config, theme="light"))
     assert "color-scheme: light;" in html
     assert "prefers-color-scheme" not in html
-    assert "#fdfdfc" in html
+    assert LIGHT_VARS.strip() in html
 
 
 def test_every_theme_ships_syntax_highlighting():
@@ -65,7 +65,7 @@ def test_query_param_overrides_the_drafts_own_theme(client):
     ).json()["id"]
 
     assert "prefers-color-scheme" not in client.get(f"/d/{draft_id}").text
-    assert "#fdfdfc" in client.get(f"/d/{draft_id}?theme=light").text
+    assert LIGHT_VARS.strip() in client.get(f"/d/{draft_id}?theme=light").text
 
 
 def test_draft_theme_applies_without_a_query_param(client):
@@ -73,7 +73,7 @@ def test_draft_theme_applies_without_a_query_param(client):
         "/api/upload/markdown", json={"markdown": "# Q\n", "theme": "light"}, headers=AUTH
     ).json()
     assert response["theme"] == "light"
-    assert "#fdfdfc" in client.get(f"/d/{response['id']}").text
+    assert LIGHT_VARS.strip() in client.get(f"/d/{response['id']}").text
 
 
 def test_unrecognised_query_theme_falls_back(client):

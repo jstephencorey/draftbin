@@ -9,18 +9,27 @@ from datetime import datetime, timezone
 from pathlib import PurePosixPath
 from zoneinfo import ZoneInfo
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi import Cookie, Depends, FastAPI, Form, Header, HTTPException, Request
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    Response,
+)
 from pydantic import BaseModel, Field
 
 from draftbin.config import Config, load_config
 from draftbin.db import Database, Draft
+from draftbin.fonts import FONT_CACHE_CONTROL, font_path
 from draftbin.html_document import document_title
 from draftbin.ids import is_draft_id, new_draft_id
 from draftbin.markdown_render import render_markdown
 from draftbin.storage import HtmlStore
 from draftbin.templates import (
     THEMES,
+    PasteForm,
     render_expired,
     render_landing,
     render_markdown_document,
@@ -29,17 +38,31 @@ from draftbin.templates import (
 
 logger = logging.getLogger("draftbin")
 
-DRAFT_CSP = "; ".join(
-    [
-        "sandbox allow-popups allow-popups-to-escape-sandbox",
-        "default-src 'none'",
-        "style-src 'unsafe-inline'",
-        "img-src https: data:",
-        "base-uri 'none'",
-        "form-action 'none'",
-        "frame-ancestors 'none'",
-    ]
-)
+# Two words is a small enough keyspace that ids can collide, so give up rather than spin.
+# Hitting this at single-user volumes would mean something is badly wrong.
+ID_ATTEMPTS = 12
+
+PASTE_COOKIE = "draftbin_token"
+PASTE_COOKIE_MAX_AGE = 30 * 24 * 60 * 60
+
+
+def draft_csp(public_base_url: str) -> str:
+    return "; ".join(
+        [
+            "sandbox allow-popups allow-popups-to-escape-sandbox",
+            "default-src 'none'",
+            "style-src 'unsafe-inline'",
+            # The sandbox directive puts the document on an opaque origin, and browsers
+            # have not always agreed on whether 'self' still names this host afterwards.
+            # Spelling the origin out removes the question.
+            f"font-src 'self' {public_base_url}",
+            "img-src https: data:",
+            "base-uri 'none'",
+            "form-action 'none'",
+            "frame-ancestors 'none'",
+        ]
+    )
+
 
 PRIVATE_HEADERS = {
     "Cache-Control": "no-store, private, must-revalidate",
@@ -47,8 +70,6 @@ PRIVATE_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Robots-Tag": "noindex, nofollow, noarchive, nosnippet",
 }
-
-DRAFT_HEADERS = {**PRIVATE_HEADERS, "Content-Security-Policy": DRAFT_CSP}
 
 
 class HtmlUpload(BaseModel):
@@ -156,6 +177,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     config = config or load_config()
     database = Database(config.db_path)
     store = HtmlStore(config.drafts_dir)
+    draft_headers = {**PRIVATE_HEADERS, "Content-Security-Policy": draft_csp(config.public_base_url)}
 
     def sweep_expired() -> int:
         now = int(time.time())
@@ -286,8 +308,15 @@ def create_app(config: Config | None = None) -> FastAPI:
             content_hash=f"sha256:{hashlib.sha256(prepared.stored.encode('utf-8')).hexdigest()}",
         )
 
+    def allocate_draft_id() -> str:
+        for _ in range(ID_ATTEMPTS):
+            candidate = new_draft_id()
+            if not database.id_in_use(candidate):
+                return candidate
+        raise HTTPException(status_code=503, detail="Could not find a free draft id.")
+
     def publish(prepared: Prepared, expires_at: int, now: int) -> dict:
-        draft = as_draft(new_draft_id(), prepared, expires_at, now)
+        draft = as_draft(allocate_draft_id(), prepared, expires_at, now)
         store.write(draft.id, prepared.stored)
         try:
             database.insert(draft)
@@ -296,11 +325,93 @@ def create_app(config: Config | None = None) -> FastAPI:
             raise
         return draft_summary(draft, config, now)
 
-    @app.get("/", response_class=HTMLResponse)
-    def landing() -> HTMLResponse:
+    def token_matches(candidate: str | None) -> bool:
+        return bool(candidate) and secrets.compare_digest(candidate, config.token)
+
+    def landing_page(form: PasteForm, status_code: int = 200) -> HTMLResponse:
         return HTMLResponse(
-            render_landing(config.public_base_url, config.default_ttl_seconds, config.theme),
+            render_landing(
+                config.public_base_url, config.default_ttl_seconds, config.theme, form
+            ),
+            status_code=status_code,
             headers=PRIVATE_HEADERS,
+        )
+
+    def remember_token(response: Response) -> Response:
+        """Only ever called once the token has been checked, so the cookie is the token."""
+        response.set_cookie(
+            PASTE_COOKIE,
+            config.token,
+            max_age=PASTE_COOKIE_MAX_AGE,
+            path="/",
+            httponly=True,
+            # Withholds the cookie on cross-site requests, top-level POSTs included, so a
+            # hostile page cannot make the browser publish on Joseph's behalf.
+            samesite="strict",
+            secure=config.cookies_are_secure,
+        )
+        return response
+
+    @app.get("/", response_class=HTMLResponse)
+    def landing(draftbin_token: str | None = Cookie(default=None)) -> HTMLResponse:
+        return landing_page(PasteForm(needs_token=not token_matches(draftbin_token)))
+
+    @app.post("/paste")
+    def paste_draft(
+        text: str = Form(default=""),
+        title: str = Form(default=""),
+        token: str = Form(default=""),
+        draftbin_token: str | None = Cookie(default=None),
+    ) -> Response:
+        """Publish straight from a browser, for the times there is no terminal to hand.
+
+        A form cannot send a bearer header without JavaScript, and the CSP rules that out,
+        so the token arrives in a field once and then rides in a cookie.
+        """
+        # Copying a token off a line picks up a trailing newline more often than not, and
+        # "that token was not accepted" is a miserable way to find out. The cookie is set
+        # by us and never needs it.
+        entered = token.strip()
+        supplied = entered or draftbin_token or ""
+        if not token_matches(supplied):
+            stale_cookie = not entered and draftbin_token is not None
+            message = (
+                "That token is no longer valid — it has probably been rotated. Enter the "
+                "current one."
+                if stale_cookie
+                else "That token was not accepted."
+            )
+            response = landing_page(PasteForm(text, title, True, message), status_code=401)
+            if stale_cookie:
+                response.delete_cookie(PASTE_COOKIE, path="/")
+            return response
+
+        if not text.strip():
+            # The token was good, so remember it anyway rather than asking twice.
+            return remember_token(
+                landing_page(PasteForm(text, title, False, "Nothing to publish."), 422)
+            )
+
+        now = int(time.time())
+        expires_at = resolve_expiry(None, now)
+        prepared = prepare_markdown(
+            MarkdownUpload(markdown=text, title=title.strip() or None),
+            expires_at,
+            config.display_zone,
+        )
+        draft = publish(prepared, expires_at, now)
+
+        # Relative, so the address bar keeps whatever hostname the browser arrived on —
+        # that is the one worth sharing from a phone.
+        return remember_token(RedirectResponse(f"/d/{draft['id']}", status_code=303))
+
+    @app.api_route("/static/fonts/{filename}", methods=["GET", "HEAD"])
+    def font_file(filename: str) -> FileResponse:
+        path = font_path(filename)
+        if path is None:
+            raise HTTPException(status_code=404, detail="Not found.")
+        return FileResponse(
+            path, media_type="font/woff2", headers={"Cache-Control": FONT_CACHE_CONTROL}
         )
 
     @app.get("/healthz")
@@ -398,7 +509,7 @@ def create_app(config: Config | None = None) -> FastAPI:
             )
 
         if draft.source_format == "html":
-            return HTMLResponse(stored, headers=DRAFT_HEADERS)
+            return HTMLResponse(stored, headers=draft_headers)
         return HTMLResponse(
             render_markdown_document(
                 stored,
@@ -407,7 +518,7 @@ def create_app(config: Config | None = None) -> FastAPI:
                 resolve_theme(theme, draft.theme),
                 config.display_zone,
             ),
-            headers=DRAFT_HEADERS,
+            headers=draft_headers,
         )
 
     return app
