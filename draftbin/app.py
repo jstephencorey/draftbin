@@ -4,6 +4,7 @@ import logging
 import secrets
 import time
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
 
@@ -73,6 +74,52 @@ def title_from_filename(filename: str | None) -> str | None:
     if not filename:
         return None
     return PurePosixPath(filename).stem.strip() or None
+
+
+@dataclass(frozen=True)
+class Prepared:
+    """A document rendered and measured, before it is given an id, a created date, or a row."""
+
+    stored: str
+    served_bytes: int
+    title: str
+    filename: str | None
+    source_format: str
+    theme: str | None
+
+
+def prepare_html(body: HtmlUpload) -> Prepared:
+    filename = safe_filename(body.filename)
+    return Prepared(
+        stored=body.html,
+        served_bytes=len(body.html.encode("utf-8")),
+        title=document_title(body.html) or title_from_filename(filename) or "Untitled draft",
+        filename=filename,
+        source_format="html",
+        theme=None,
+    )
+
+
+def prepare_markdown(body: MarkdownUpload, expires_at: int) -> Prepared:
+    filename = safe_filename(body.filename)
+    rendered = render_markdown(body.markdown)
+    title = (
+        (body.title or "").strip()
+        or rendered.title
+        or title_from_filename(filename)
+        or "Untitled draft"
+    )
+    return Prepared(
+        stored=rendered.html,
+        # The auto palette carries both light and dark rules, so it bounds every theme.
+        served_bytes=len(
+            render_markdown_document(rendered.html, title, expires_at, "auto").encode("utf-8")
+        ),
+        title=title,
+        filename=filename,
+        source_format="markdown",
+        theme=body.theme,
+    )
 
 
 def isoformat(epoch_seconds: int) -> str:
@@ -207,37 +254,30 @@ def create_app(config: Config | None = None) -> FastAPI:
             return requested
         return draft_theme or config.theme
 
-    def publish(
-        stored: str,
-        served_bytes: int,
-        title: str,
-        filename: str | None,
-        source_format: str,
-        theme: str | None,
-        expires_at: int,
-        now: int,
-    ) -> dict:
-        if served_bytes > config.max_upload_bytes:
+    def as_draft(draft_id: str, prepared: Prepared, expires_at: int, created_at: int) -> Draft:
+        if prepared.served_bytes > config.max_upload_bytes:
             raise HTTPException(
                 status_code=413,
                 detail=(
-                    f"Rendered document is {served_bytes} bytes; the maximum is "
+                    f"Rendered document is {prepared.served_bytes} bytes; the maximum is "
                     f"{config.max_upload_bytes}."
                 ),
             )
-
-        draft = Draft(
-            id=new_draft_id(),
-            title=title,
-            filename=filename,
-            source_format=source_format,
-            theme=theme,
-            created_at=now,
+        return Draft(
+            id=draft_id,
+            title=prepared.title,
+            filename=prepared.filename,
+            source_format=prepared.source_format,
+            theme=prepared.theme,
+            created_at=created_at,
             expires_at=expires_at,
-            size_bytes=served_bytes,
-            content_hash=f"sha256:{hashlib.sha256(stored.encode('utf-8')).hexdigest()}",
+            size_bytes=prepared.served_bytes,
+            content_hash=f"sha256:{hashlib.sha256(prepared.stored.encode('utf-8')).hexdigest()}",
         )
-        store.write(draft.id, stored)
+
+    def publish(prepared: Prepared, expires_at: int, now: int) -> dict:
+        draft = as_draft(new_draft_id(), prepared, expires_at, now)
+        store.write(draft.id, prepared.stored)
         try:
             database.insert(draft)
         except Exception:
@@ -263,17 +303,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     @app.post("/api/upload", status_code=201, dependencies=[Depends(require_token)])
     def upload_html(body: HtmlUpload) -> dict:
         now = int(time.time())
-        filename = safe_filename(body.filename)
-        return publish(
-            stored=body.html,
-            served_bytes=len(body.html.encode("utf-8")),
-            title=document_title(body.html) or title_from_filename(filename) or "Untitled draft",
-            filename=filename,
-            source_format="html",
-            theme=None,
-            expires_at=resolve_expiry(body.ttl_seconds, now),
-            now=now,
-        )
+        return publish(prepare_html(body), resolve_expiry(body.ttl_seconds, now), now)
 
     @app.post("/api/upload/markdown", status_code=201, dependencies=[Depends(require_token)])
     def upload_markdown(body: MarkdownUpload) -> dict:
@@ -284,27 +314,7 @@ def create_app(config: Config | None = None) -> FastAPI:
             )
 
         expires_at = resolve_expiry(body.ttl_seconds, now)
-        filename = safe_filename(body.filename)
-        rendered = render_markdown(body.markdown)
-        title = (
-            (body.title or "").strip()
-            or rendered.title
-            or title_from_filename(filename)
-            or "Untitled draft"
-        )
-        return publish(
-            stored=rendered.html,
-            # The auto palette carries both light and dark rules, so it bounds every theme.
-            served_bytes=len(
-                render_markdown_document(rendered.html, title, expires_at, "auto").encode("utf-8")
-            ),
-            title=title,
-            filename=filename,
-            source_format="markdown",
-            theme=body.theme,
-            expires_at=expires_at,
-            now=now,
-        )
+        return publish(prepare_markdown(body, expires_at), expires_at, now)
 
     @app.get("/api/drafts", dependencies=[Depends(require_token)])
     def list_drafts() -> dict:
