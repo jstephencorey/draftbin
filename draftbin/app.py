@@ -33,6 +33,7 @@ DRAFT_CSP = "; ".join(
         "img-src https: data:",
         "base-uri 'none'",
         "form-action 'none'",
+        "frame-ancestors 'none'",
     ]
 )
 

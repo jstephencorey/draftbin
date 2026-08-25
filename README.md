@@ -87,7 +87,7 @@ Drafts are served with:
 ```
 Content-Security-Policy: sandbox allow-popups allow-popups-to-escape-sandbox;
   default-src 'none'; style-src 'unsafe-inline'; img-src https: data:;
-  base-uri 'none'; form-action 'none'
+  base-uri 'none'; form-action 'none'; frame-ancestors 'none'
 Cache-Control: no-store, private, must-revalidate
 Referrer-Policy: no-referrer
 X-Robots-Tag: noindex, nofollow, noarchive, nosnippet

@@ -44,6 +44,16 @@ def test_draft_response_carries_the_privacy_headers(client):
     assert headers["x-content-type-options"] == "nosniff"
 
 
+def test_drafts_cannot_be_framed(client):
+    """The sandbox directive isolates a draft, but it does not stop a third party embedding it."""
+    draft_id = client.post(
+        "/api/upload/markdown", json={"markdown": "# Framed\n"}, headers=AUTH
+    ).json()["id"]
+
+    csp = client.get(f"/d/{draft_id}").headers["content-security-policy"]
+    assert "frame-ancestors 'none'" in csp
+
+
 def test_json_responses_are_never_cached(client):
     """These payloads carry draft URLs, which are the only thing gating access."""
     draft_id = client.post(
