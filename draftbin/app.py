@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import PurePosixPath
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from draftbin.config import Config, load_config
@@ -128,6 +128,28 @@ def create_app(config: Config | None = None) -> FastAPI:
             sweeper.cancel()
 
     app = FastAPI(title="draftbin", lifespan=lifespan, docs_url=None, redoc_url=None)
+
+    @app.middleware("http")
+    async def reject_oversized_bodies(request: Request, call_next):
+        """FastAPI reads the whole request body before it solves dependencies.
+
+        So `Depends(require_token)` cannot stop an anonymous caller making the server
+        buffer a huge payload; only a check ahead of the route can. Content-Length is
+        the sole size signal available that early, and a chunked upload does not carry
+        one, so oversized documents are still caught again after rendering.
+        """
+        declared = request.headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > config.max_upload_bytes:
+            return JSONResponse(
+                status_code=413,
+                content={
+                    "detail": (
+                        f"Request body is {declared} bytes; the maximum is "
+                        f"{config.max_upload_bytes}."
+                    )
+                },
+            )
+        return await call_next(request)
 
     @app.middleware("http")
     async def keep_responses_private(request: Request, call_next):

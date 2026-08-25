@@ -59,6 +59,14 @@ def test_upload_rejects_an_oversized_document(client, config):
     assert response.status_code == 413
 
 
+def test_oversized_body_is_rejected_without_a_token(client, config):
+    """The size guard has to sit ahead of the route: the body is read before auth runs."""
+    oversized = "x" * (config.max_upload_bytes + 1)
+    response = client.post("/api/upload", json={"html": oversized})
+    assert response.status_code == 413
+    assert "no-store" in response.headers["cache-control"]
+
+
 def test_unknown_draft_id_renders_the_not_found_page(client):
     response = client.get("/d/aaaaaaaaaaaaaaaaaaaaaa")
     assert response.status_code == 404

@@ -52,6 +52,12 @@ Uploads and management need `Authorization: Bearer $DRAFTBIN_TOKEN`. Viewing doe
 | `HEAD`   | `/d/{id}`              | Check a link without fetching the body    |
 | `GET`    | `/healthz`             | Liveness probe                            |
 
+`DRAFTBIN_MAX_UPLOAD_BYTES` is enforced twice: against `Content-Length` before the
+request is read, and against the rendered document before it is stored. The early check
+matters because FastAPI buffers the request body *before* it evaluates the token
+dependency, so bearer auth alone cannot stop an anonymous caller sending a huge payload.
+A chunked request carries no `Content-Length` and is only caught by the second check.
+
 `POST /api/upload` takes `html`, plus optional `filename` and `ttl_seconds`.
 `POST /api/upload/markdown` takes `markdown`, plus optional `filename`, `title`,
 `theme`, and `ttl_seconds`. A `ttl_seconds` above the server maximum is rejected rather
@@ -121,7 +127,7 @@ Only the CSP is draft-specific.
 | `DRAFTBIN_DATA_DIR`               | `.local`                | `/data` in the container                    |
 | `DRAFTBIN_DEFAULT_TTL_SECONDS`    | `86400`                 | 24 hours                                    |
 | `DRAFTBIN_MAX_TTL_SECONDS`        | `604800`                | 7 days; caps per-upload overrides           |
-| `DRAFTBIN_MAX_UPLOAD_BYTES`       | `2097152`               | 2 MiB, measured on the rendered document    |
+| `DRAFTBIN_MAX_UPLOAD_BYTES`       | `2097152`               | 2 MiB; bounds the request and the document  |
 | `DRAFTBIN_SWEEP_INTERVAL_SECONDS` | `300`                   | How often expired drafts are deleted        |
 
 `DRAFTBIN_THEME` sets the default for markdown drafts that don't specify one and are
