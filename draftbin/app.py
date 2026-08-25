@@ -29,6 +29,10 @@ from draftbin.templates import (
 
 logger = logging.getLogger("draftbin")
 
+# Two words is a small enough keyspace that ids can collide, so give up rather than
+# spin. Hitting this at single-user volumes would mean something is badly wrong.
+ID_ATTEMPTS = 12
+
 DRAFT_CSP = "; ".join(
     [
         "sandbox allow-popups allow-popups-to-escape-sandbox",
@@ -286,8 +290,15 @@ def create_app(config: Config | None = None) -> FastAPI:
             content_hash=f"sha256:{hashlib.sha256(prepared.stored.encode('utf-8')).hexdigest()}",
         )
 
+    def allocate_draft_id() -> str:
+        for _ in range(ID_ATTEMPTS):
+            candidate = new_draft_id()
+            if not database.id_in_use(candidate):
+                return candidate
+        raise HTTPException(status_code=503, detail="Could not find a free draft id.")
+
     def publish(prepared: Prepared, expires_at: int, now: int) -> dict:
-        draft = as_draft(new_draft_id(), prepared, expires_at, now)
+        draft = as_draft(allocate_draft_id(), prepared, expires_at, now)
         store.write(draft.id, prepared.stored)
         try:
             database.insert(draft)

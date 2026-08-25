@@ -14,12 +14,32 @@ curl -X POST https://drafts.example.com/api/upload/markdown \
   -H "Content-Type: application/json" \
   -d '{"markdown": "# The plan\n\nStep one.", "filename": "plan.md"}'
 
-{"id":"UH4jXBAR958NTaH1e0Blhg","url":"https://drafts.example.com/d/UH4jXBAR958NTaH1e0Blhg", ...}
+{"id":"broad-half","url":"https://drafts.example.com/d/broad-half", ...}
 ```
 
-Markdown is rendered to a styled standalone document — tables, footnotes, task lists,
+Markdown is rendered to a styled standalone document â€” tables, footnotes, task lists,
 definition lists, syntax-highlighted code, light/dark palettes, a collapsible contents
 list, and a print stylesheet. HTML uploads are stored and served byte for byte.
+
+## Readable URLs
+
+A draft id is two words from the [EFF short wordlist][eff] — `broad-half`, `velvet-sage`.
+The wordlist earns its place: nothing over five characters, no word a prefix of another,
+and near-homophones already removed, so an id survives being read down a phone or typed
+on one. That is the whole point; the common move here is to publish on a laptop, text
+yourself the link, and open it on a phone.
+
+[eff]: https://www.eff.org/dice
+
+The trade is keyspace. Two words is about 1.7 million combinations, against 128 bits for
+the ids minted before the change, and that is small enough to enumerate. It is not what
+keeps a draft private — expiry is, and the reasoning below is unchanged. Do not publish
+anything whose exposure you would actually mind.
+
+Ids are checked against live drafts **and** tombstones before being handed out, so an id
+retires permanently. Reissuing one would silently point a link somebody still holds at
+unrelated content. Ids minted before the switch still resolve, so links already written
+into notes keep working.
 
 ## Why links expire
 
@@ -39,7 +59,7 @@ Expiry is enforced two ways, and both matter:
   later compromise of the host would expose.
 
 Both deletion paths drop the database row before the file, so a crash in between would
-strand a file that nothing revisits — sweeping is driven off rows, and that row is gone.
+strand a file that nothing revisits â€” sweeping is driven off rows, and that row is gone.
 Startup reconciles the two by deleting any stored file with no matching row.
 
 Publishing again mints a **new** ID. A link that leaked before it expired stays dead.
@@ -48,14 +68,14 @@ Publishing again mints a **new** ID. A link that leaked before it expired stays 
 
 `PUT /api/drafts/{id}/markdown` (or `/html`) swaps the body of a live draft and keeps
 its ID, so a link already written into a note survives the revision. It takes the same
-fields as the matching upload endpoint, and a draft may change format on the way — a
+fields as the matching upload endpoint, and a draft may change format on the way â€” a
 markdown draft replaced with HTML stops being themeable.
 
 Replacing **resets the expiry**, exactly as publishing again would; otherwise a revision
 made shortly before the deadline would produce a link that died minutes later. The
 server maximum still caps each window.
 
-An expired ID cannot be replaced — that would revive a link that may already have
+An expired ID cannot be replaced â€” that would revive a link that may already have
 leaked. Publish a new draft instead.
 
 `PATCH /api/drafts/{id}` takes `ttl_seconds` alone and moves the expiry without touching
@@ -69,7 +89,7 @@ because every window is still bounded by `DRAFTBIN_MAX_TTL_SECONDS`.
 ## When a link is dead
 
 Following a dead link gives a page that distinguishes the two cases: an ID that once
-worked reads "no longer available … removed on _date_", and an ID that never existed
+worked reads "no longer available â€¦ removed on _date_", and an ID that never existed
 reads "does not exist". Without that split, a stale link in a note is indistinguishable
 from a typo, and the reflex is to go looking for a bug that isn't there.
 
@@ -106,14 +126,14 @@ A chunked request carries no `Content-Length` and is only caught by the second c
 `theme`, and `ttl_seconds`. A `ttl_seconds` above the server maximum is rejected rather
 than silently clamped.
 
-Responses carry a `content_hash` over the **stored body** — `sha256:` plus the digest.
+Responses carry a `content_hash` over the **stored body** â€” `sha256:` plus the digest.
 For an HTML upload the stored body is the file you sent, so the hash identifies that
 file. For markdown it is the rendered fragment, not your `.md`, so it tells you whether
 two drafts hold the same document but cannot be recomputed from the source. Its use is
 comparing drafts to each other and confirming a replacement actually changed something.
 
 Markdown titles resolve in order: explicit `title`, then the first `# ` heading, then
-the filename stem, then `Untitled draft`. HTML uploads have no `title` field — the
+the filename stem, then `Untitled draft`. HTML uploads have no `title` field â€” the
 document names itself, so the `<title>` element is read out of it, falling back to the
 filename stem and then `Untitled draft`.
 
@@ -123,16 +143,16 @@ Markdown drafts store only a rendered body fragment; the document shell is assem
 per request. So the theme is a **read-time** decision, and any of three levels can set
 it, in order of precedence:
 
-1. `?theme=dark` on the view URL — per view, per reader, no republishing
-2. `"theme": "dark"` in the upload body — pinned to that one draft
-3. `DRAFTBIN_THEME` — the server default
+1. `?theme=dark` on the view URL â€” per view, per reader, no republishing
+2. `"theme": "dark"` in the upload body â€” pinned to that one draft
+3. `DRAFTBIN_THEME` â€” the server default
 
 Each is `auto`, `light`, or `dark`. An unrecognised `?theme=` value falls back to the
 next level rather than erroring, since these URLs get hand-edited. `auto` follows the
 reader's OS via `prefers-color-scheme`; `light` and `dark` are unconditional.
 
 Because the shell is assembled at request time, editing the stylesheet also changes
-**already-published** drafts — no republishing needed.
+**already-published** drafts â€” no republishing needed.
 
 The contents list rides on the same property. It is read back out of the stored body at
 request time rather than recorded at upload, from the `h2` and `h3` anchors, and appears
@@ -159,23 +179,23 @@ X-Robots-Tag: noindex, nofollow, noarchive, nosnippet
 
 `default-src 'none'` is what actually prevents script execution; the `sandbox`
 directive adds opaque-origin isolation on top. That combination means no JavaScript,
-no external stylesheets, and no web fonts in published documents — inline `<style>`
+no external stylesheets, and no web fonts in published documents â€” inline `<style>`
 only. Mermaid diagrams and JS charts will not run.
 
 Markdown drafts get a second, independent barrier: raw HTML embedded in the markdown is
 filtered to an allowlist before it is stored, so a `<script>` or `<iframe>` becomes
-visible escaped text rather than a tag. That matters because the CSP is a *header* — a
+visible escaped text rather than a tag. That matters because the CSP is a *header* â€” a
 draft saved to disk and reopened from `file://` carries no CSP at all, and that saved
 copy is often the durable record. `<details>`, `<summary>`, inline SVG, tables, and
 ordinary formatting all pass through; event handlers and `javascript:` URLs do not.
-HTML uploads are **not** filtered — they are served byte for byte by definition, and
+HTML uploads are **not** filtered â€” they are served byte for byte by definition, and
 the CSP is their only barrier.
 
 `Referrer-Policy: no-referrer` is the non-obvious one. Without it, a reader clicking a
 link inside a draft leaks the draft's secret URL to that third party in the `Referer`
 header, which defeats the whole point of an unlisted URL.
 
-Every response carries those four headers, not just draft views — `GET /api/drafts`
+Every response carries those four headers, not just draft views â€” `GET /api/drafts`
 returns every live draft URL at once, so it is the last thing that should sit in a cache.
 Only the CSP is draft-specific.
 
@@ -201,7 +221,7 @@ Only the CSP is draft-specific.
 `DRAFTBIN_THEME` sets the default for markdown drafts that don't specify one and are
 viewed without `?theme=`. See [Theming](#theming) for the full precedence chain.
 
-`DRAFTBIN_TIMEZONE` applies only to dates rendered into pages a person reads — the
+`DRAFTBIN_TIMEZONE` applies only to dates rendered into pages a person reads â€” the
 expiry line at the foot of a draft and the expired page. API responses keep reporting
 UTC in ISO 8601, because a caller wants an unambiguous instant it can convert itself.
 
