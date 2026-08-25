@@ -44,6 +44,26 @@ def test_draft_response_carries_the_privacy_headers(client):
     assert headers["x-content-type-options"] == "nosniff"
 
 
+def test_content_hash_is_reported_on_upload_and_in_the_listing(client):
+    """It is how a caller tells whether the live draft still matches its local copy."""
+    uploaded = client.post(
+        "/api/upload/markdown", json={"markdown": "# Hashed\n"}, headers=AUTH
+    ).json()
+    listed = client.get("/api/drafts", headers=AUTH).json()["drafts"][0]
+
+    assert uploaded["content_hash"].startswith("sha256:")
+    assert listed["content_hash"] == uploaded["content_hash"]
+
+
+def test_uploading_the_same_html_twice_gives_the_same_hash(client):
+    body = {"html": "<p>identical</p>"}
+    first = client.post("/api/upload", json=body, headers=AUTH).json()
+    second = client.post("/api/upload", json=body, headers=AUTH).json()
+
+    assert first["id"] != second["id"]
+    assert first["content_hash"] == second["content_hash"]
+
+
 def test_head_on_a_draft_reports_the_same_status_and_headers(client):
     """curl -sI is the reflex for checking a link; answering it with 405 is just confusing."""
     draft_id = client.post(

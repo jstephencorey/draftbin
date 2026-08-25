@@ -89,6 +89,7 @@ def draft_summary(draft: Draft, config: Config, now: int) -> dict:
         "theme": draft.theme or config.theme,
         "themeable": draft.source_format == "markdown",
         "size_bytes": draft.size_bytes,
+        "content_hash": draft.content_hash,
         "created_at": isoformat(draft.created_at),
         "expires_at": isoformat(draft.expires_at),
         "expires_in_seconds": max(0, draft.expires_at - now),
