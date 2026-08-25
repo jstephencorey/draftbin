@@ -104,10 +104,11 @@ A chunked request carries no `Content-Length` and is only caught by the second c
 `theme`, and `ttl_seconds`. A `ttl_seconds` above the server maximum is rejected rather
 than silently clamped.
 
-Responses carry a `content_hash` over the stored body — `sha256:` plus the digest. It
-answers the question the listing otherwise cannot: whether the draft that is live still
-matches the copy on your disk, or whether you edited the local file and never
-republished.
+Responses carry a `content_hash` over the **stored body** — `sha256:` plus the digest.
+For an HTML upload the stored body is the file you sent, so the hash identifies that
+file. For markdown it is the rendered fragment, not your `.md`, so it tells you whether
+two drafts hold the same document but cannot be recomputed from the source. Its use is
+comparing drafts to each other and confirming a replacement actually changed something.
 
 Markdown titles resolve in order: explicit `title`, then the first `# ` heading, then
 the filename stem, then `Untitled draft`. HTML uploads have no `title` field — the
