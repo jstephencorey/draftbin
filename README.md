@@ -1,5 +1,7 @@
 # draftbin
 
+[![tests](https://github.com/jstephencorey/draftbin/actions/workflows/tests.yml/badge.svg)](https://github.com/jstephencorey/draftbin/actions/workflows/tests.yml)
+
 Self-hosted ephemeral publishing for agent-generated documents. Post HTML or markdown,
 get back an unlisted URL you can open anywhere, and have it delete itself after a day.
 
