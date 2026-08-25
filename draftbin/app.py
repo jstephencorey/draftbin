@@ -279,7 +279,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         store.delete(draft_id)
         return {"ok": True}
 
-    @app.get("/d/{draft_id}", response_class=HTMLResponse)
+    @app.api_route("/d/{draft_id}", methods=["GET", "HEAD"], response_class=HTMLResponse)
     def view_draft(draft_id: str, theme: str | None = None) -> HTMLResponse:
         now = int(time.time())
         draft = database.find_live(draft_id, now) if is_draft_id(draft_id) else None

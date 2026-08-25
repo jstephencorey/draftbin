@@ -49,6 +49,7 @@ Uploads and management need `Authorization: Bearer $DRAFTBIN_TOKEN`. Viewing doe
 | `GET`    | `/api/drafts`          | List live drafts with their expiry times  |
 | `DELETE` | `/api/drafts/{id}`     | Delete a draft before it expires          |
 | `GET`    | `/d/{id}?theme=`       | View a draft (public, unlisted, expiring) |
+| `HEAD`   | `/d/{id}`              | Check a link without fetching the body    |
 | `GET`    | `/healthz`             | Liveness probe                            |
 
 `POST /api/upload` takes `html`, plus optional `filename` and `ttl_seconds`.

@@ -44,6 +44,19 @@ def test_draft_response_carries_the_privacy_headers(client):
     assert headers["x-content-type-options"] == "nosniff"
 
 
+def test_head_on_a_draft_reports_the_same_status_and_headers(client):
+    """curl -sI is the reflex for checking a link; answering it with 405 is just confusing."""
+    draft_id = client.post(
+        "/api/upload/markdown", json={"markdown": "# Probed\n"}, headers=AUTH
+    ).json()["id"]
+
+    response = client.head(f"/d/{draft_id}")
+    assert response.status_code == 200
+    assert "sandbox" in response.headers["content-security-policy"]
+
+    assert client.head("/d/aaaaaaaaaaaaaaaaaaaaaa").status_code == 404
+
+
 def test_drafts_cannot_be_framed(client):
     """The sandbox directive isolates a draft, but it does not stop a third party embedding it."""
     draft_id = client.post(
