@@ -120,6 +120,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     async def lifespan(_app: FastAPI):
         database.initialize()
         store.initialize()
+        store.discard_staged_writes()
         await asyncio.to_thread(sweep_expired)
         sweeper = asyncio.create_task(sweep_forever())
         try:
