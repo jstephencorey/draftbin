@@ -4,7 +4,7 @@ import logging
 import secrets
 import time
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
 
@@ -60,6 +60,10 @@ class MarkdownUpload(BaseModel):
     filename: str | None = None
     title: str | None = None
     theme: str | None = None
+    ttl_seconds: int | None = Field(default=None, gt=0)
+
+
+class ExpiryUpdate(BaseModel):
     ttl_seconds: int | None = Field(default=None, gt=0)
 
 
@@ -326,7 +330,7 @@ def create_app(config: Config | None = None) -> FastAPI:
             raise
         return draft_summary(draft, config, now)
 
-    def find_replaceable(draft_id: str, now: int) -> Draft:
+    def require_live_draft(draft_id: str, now: int) -> Draft:
         """Expired ids are gone for good; reviving one would resurrect a link that leaked."""
         existing = database.find_live(draft_id, now) if is_draft_id(draft_id) else None
         if existing is None:
@@ -336,15 +340,24 @@ def create_app(config: Config | None = None) -> FastAPI:
     @app.put("/api/drafts/{draft_id}/html", dependencies=[Depends(require_token)])
     def replace_with_html(draft_id: str, body: HtmlUpload) -> dict:
         now = int(time.time())
-        existing = find_replaceable(draft_id, now)
+        existing = require_live_draft(draft_id, now)
         return republish(existing, prepare_html(body), resolve_expiry(body.ttl_seconds, now), now)
 
     @app.put("/api/drafts/{draft_id}/markdown", dependencies=[Depends(require_token)])
     def replace_with_markdown(draft_id: str, body: MarkdownUpload) -> dict:
         now = int(time.time())
-        existing = find_replaceable(draft_id, now)
+        existing = require_live_draft(draft_id, now)
         expires_at = resolve_expiry(body.ttl_seconds, now)
         return republish(existing, prepare_markdown(body, expires_at), expires_at, now)
+
+    @app.patch("/api/drafts/{draft_id}", dependencies=[Depends(require_token)])
+    def extend_draft(draft_id: str, body: ExpiryUpdate) -> dict:
+        """Buy more time on a draft you are still reading, without minting a new link."""
+        now = int(time.time())
+        existing = require_live_draft(draft_id, now)
+        expires_at = resolve_expiry(body.ttl_seconds, now)
+        database.set_expiry(existing.id, expires_at)
+        return draft_summary(replace(existing, expires_at=expires_at), config, now)
 
     @app.get("/api/drafts", dependencies=[Depends(require_token)])
     def list_drafts() -> dict:

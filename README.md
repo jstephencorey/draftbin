@@ -56,6 +56,14 @@ server maximum still caps each window.
 An expired ID cannot be replaced — that would revive a link that may already have
 leaked. Publish a new draft instead.
 
+`PATCH /api/drafts/{id}` takes `ttl_seconds` alone and moves the expiry without touching
+the body, for the case where you are still reading something that is about to lapse.
+The new window runs from now and is capped the same way. An expired draft cannot be
+extended either.
+
+Both are ways to avoid rewriting the note that points at a draft; neither weakens expiry,
+because every window is still bounded by `DRAFTBIN_MAX_TTL_SECONDS`.
+
 ## API
 
 Uploads and management need `Authorization: Bearer $DRAFTBIN_TOKEN`. Viewing does not.
@@ -66,6 +74,7 @@ Uploads and management need `Authorization: Bearer $DRAFTBIN_TOKEN`. Viewing doe
 | `POST`   | `/api/upload/markdown` | Render markdown, then publish it          |
 | `PUT`    | `/api/drafts/{id}/html`     | Replace a draft, keeping its URL     |
 | `PUT`    | `/api/drafts/{id}/markdown` | Replace a draft, keeping its URL     |
+| `PATCH`  | `/api/drafts/{id}`     | Push a live draft's expiry out             |
 | `GET`    | `/api/drafts`          | List live drafts with their expiry times  |
 | `DELETE` | `/api/drafts/{id}`     | Delete a draft before it expires          |
 | `GET`    | `/d/{id}?theme=`       | View a draft (public, unlisted, expiring) |

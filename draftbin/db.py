@@ -114,6 +114,12 @@ class Database:
                 ),
             )
 
+    def set_expiry(self, draft_id: str, expires_at: int) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE drafts SET expires_at = ? WHERE id = ?", (expires_at, draft_id)
+            )
+
     def find_live(self, draft_id: str, now: int) -> Draft | None:
         with self.connect() as connection:
             row = connection.execute(
