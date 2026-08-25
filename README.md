@@ -116,6 +116,15 @@ directive adds opaque-origin isolation on top. That combination means no JavaScr
 no external stylesheets, and no web fonts in published documents — inline `<style>`
 only. Mermaid diagrams and JS charts will not run.
 
+Markdown drafts get a second, independent barrier: raw HTML embedded in the markdown is
+filtered to an allowlist before it is stored, so a `<script>` or `<iframe>` becomes
+visible escaped text rather than a tag. That matters because the CSP is a *header* — a
+draft saved to disk and reopened from `file://` carries no CSP at all, and that saved
+copy is often the durable record. `<details>`, `<summary>`, inline SVG, tables, and
+ordinary formatting all pass through; event handlers and `javascript:` URLs do not.
+HTML uploads are **not** filtered — they are served byte for byte by definition, and
+the CSP is their only barrier.
+
 `Referrer-Policy: no-referrer` is the non-obvious one. Without it, a reader clicking a
 link inside a draft leaks the draft's secret URL to that third party in the `Referer`
 header, which defeats the whole point of an unlisted URL.

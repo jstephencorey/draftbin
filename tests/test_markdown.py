@@ -75,11 +75,17 @@ def test_untitled_markdown_gets_a_generic_title(client):
 
 
 def test_raw_html_in_markdown_cannot_execute(client):
+    """Two independent barriers: the tag never reaches the page, and the CSP would stop it.
+
+    The second matters because a draft saved to disk and reopened from file:// has no CSP.
+    """
     response = client.post(
         "/api/upload/markdown",
         json={"markdown": "<script>alert(1)</script>\n"},
         headers=AUTH,
     )
     view = client.get(f"/d/{response.json()['id']}")
+    assert "<script>" not in view.text
+    assert "&lt;script&gt;" in view.text
     assert "sandbox" in view.headers["content-security-policy"]
     assert "default-src 'none'" in view.headers["content-security-policy"]
