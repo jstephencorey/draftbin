@@ -67,6 +67,19 @@ def test_the_cookie_is_secure_only_over_https(config):
         assert "secure" in client.post("/paste", data=PASTE).headers["set-cookie"].lower()
 
 
+def test_a_pasted_token_survives_the_whitespace_that_comes_with_it(browser):
+    """Copying a token off a line picks up a trailing newline; rejecting that is cruel."""
+    for padded in (f"{TOKEN}\n", f" {TOKEN} ", f"\t{TOKEN}\r\n"):
+        response = browser.post("/paste", data={"text": "# Padded", "token": padded})
+        assert response.status_code == 303, repr(padded)
+
+
+def test_a_whitespace_only_token_still_falls_back_to_the_cookie(browser):
+    browser.post("/paste", data=PASTE)
+
+    assert browser.post("/paste", data={"text": "# Blank", "token": "   "}).status_code == 303
+
+
 def test_a_bad_token_re_renders_the_form_with_the_text_intact(browser):
     response = browser.post("/paste", data={"text": "# Kept\n", "token": "wrong-token-entirely"})
 

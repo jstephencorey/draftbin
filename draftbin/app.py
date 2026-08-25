@@ -368,9 +368,13 @@ def create_app(config: Config | None = None) -> FastAPI:
         A form cannot send a bearer header without JavaScript, and the CSP rules that out,
         so the token arrives in a field once and then rides in a cookie.
         """
-        supplied = token or draftbin_token or ""
+        # Copying a token off a line picks up a trailing newline more often than not, and
+        # "that token was not accepted" is a miserable way to find out. The cookie is set
+        # by us and never needs it.
+        entered = token.strip()
+        supplied = entered or draftbin_token or ""
         if not token_matches(supplied):
-            stale_cookie = not token and draftbin_token is not None
+            stale_cookie = not entered and draftbin_token is not None
             message = (
                 "That token is no longer valid — it has probably been rotated. Enter the "
                 "current one."
