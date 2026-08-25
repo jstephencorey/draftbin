@@ -28,3 +28,7 @@ include = ["draftbin*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Test modules import shared fixtures as `tests.conftest`, which only resolves when the
+# project root is importable. `python -m pytest` adds it implicitly; a bare `pytest`
+# does not, so say it here rather than depending on how the suite is invoked.
+pythonpath = ["."]
