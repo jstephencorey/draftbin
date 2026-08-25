@@ -4,20 +4,24 @@ import logging
 import secrets
 import time
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
+from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from draftbin.config import Config, load_config
 from draftbin.db import Database, Draft
+from draftbin.html_document import document_title
 from draftbin.ids import is_draft_id, new_draft_id
 from draftbin.markdown_render import render_markdown
 from draftbin.storage import HtmlStore
 from draftbin.templates import (
     THEMES,
+    render_expired,
     render_landing,
     render_markdown_document,
     render_not_found,
@@ -33,6 +37,7 @@ DRAFT_CSP = "; ".join(
         "img-src https: data:",
         "base-uri 'none'",
         "form-action 'none'",
+        "frame-ancestors 'none'",
     ]
 )
 
@@ -60,6 +65,10 @@ class MarkdownUpload(BaseModel):
     ttl_seconds: int | None = Field(default=None, gt=0)
 
 
+class ExpiryUpdate(BaseModel):
+    ttl_seconds: int | None = Field(default=None, gt=0)
+
+
 def safe_filename(value: str | None) -> str | None:
     if not value:
         return None
@@ -71,6 +80,55 @@ def title_from_filename(filename: str | None) -> str | None:
     if not filename:
         return None
     return PurePosixPath(filename).stem.strip() or None
+
+
+@dataclass(frozen=True)
+class Prepared:
+    """A document rendered and measured, before it is given an id, a created date, or a row."""
+
+    stored: str
+    served_bytes: int
+    title: str
+    filename: str | None
+    source_format: str
+    theme: str | None
+
+
+def prepare_html(body: HtmlUpload) -> Prepared:
+    filename = safe_filename(body.filename)
+    return Prepared(
+        stored=body.html,
+        served_bytes=len(body.html.encode("utf-8")),
+        title=document_title(body.html) or title_from_filename(filename) or "Untitled draft",
+        filename=filename,
+        source_format="html",
+        theme=None,
+    )
+
+
+def prepare_markdown(body: MarkdownUpload, expires_at: int, zone: ZoneInfo) -> Prepared:
+    if body.theme is not None and body.theme not in THEMES:
+        raise HTTPException(status_code=422, detail=f"theme must be one of {', '.join(THEMES)}.")
+
+    filename = safe_filename(body.filename)
+    rendered = render_markdown(body.markdown)
+    title = (
+        (body.title or "").strip()
+        or rendered.title
+        or title_from_filename(filename)
+        or "Untitled draft"
+    )
+    return Prepared(
+        stored=rendered.html,
+        # The auto palette carries both light and dark rules, so it bounds every theme.
+        served_bytes=len(
+            render_markdown_document(rendered.html, title, expires_at, "auto", zone).encode("utf-8")
+        ),
+        title=title,
+        filename=filename,
+        source_format="markdown",
+        theme=body.theme,
+    )
 
 
 def isoformat(epoch_seconds: int) -> str:
@@ -87,6 +145,7 @@ def draft_summary(draft: Draft, config: Config, now: int) -> dict:
         "theme": draft.theme or config.theme,
         "themeable": draft.source_format == "markdown",
         "size_bytes": draft.size_bytes,
+        "content_hash": draft.content_hash,
         "created_at": isoformat(draft.created_at),
         "expires_at": isoformat(draft.expires_at),
         "expires_in_seconds": max(0, draft.expires_at - now),
@@ -99,10 +158,23 @@ def create_app(config: Config | None = None) -> FastAPI:
     store = HtmlStore(config.drafts_dir)
 
     def sweep_expired() -> int:
-        expired_ids = database.take_expired_ids(int(time.time()))
+        now = int(time.time())
+        expired_ids = database.take_expired_ids(now)
         for draft_id in expired_ids:
             store.delete(draft_id)
+        database.purge_tombstones(now - config.tombstone_retention_seconds)
         return len(expired_ids)
+
+    def delete_orphaned_files() -> int:
+        """Both delete paths drop the row first, so dying in between strands the file.
+
+        Nothing would ever revisit it: sweeping is driven off rows, and this one's row
+        is already gone. Reconciling against the table at startup is the only way back.
+        """
+        orphans = store.stored_ids() - database.all_ids()
+        for draft_id in orphans:
+            store.delete(draft_id)
+        return len(orphans)
 
     async def sweep_forever() -> None:
         while True:
@@ -119,7 +191,11 @@ def create_app(config: Config | None = None) -> FastAPI:
     async def lifespan(_app: FastAPI):
         database.initialize()
         store.initialize()
+        store.discard_staged_writes()
         await asyncio.to_thread(sweep_expired)
+        orphaned = await asyncio.to_thread(delete_orphaned_files)
+        if orphaned:
+            logger.warning("deleted orphaned draft files", extra={"count": orphaned})
         sweeper = asyncio.create_task(sweep_forever())
         try:
             yield
@@ -127,6 +203,28 @@ def create_app(config: Config | None = None) -> FastAPI:
             sweeper.cancel()
 
     app = FastAPI(title="draftbin", lifespan=lifespan, docs_url=None, redoc_url=None)
+
+    @app.middleware("http")
+    async def reject_oversized_bodies(request: Request, call_next):
+        """FastAPI reads the whole request body before it solves dependencies.
+
+        So `Depends(require_token)` cannot stop an anonymous caller making the server
+        buffer a huge payload; only a check ahead of the route can. Content-Length is
+        the sole size signal available that early, and a chunked upload does not carry
+        one, so oversized documents are still caught again after rendering.
+        """
+        declared = request.headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > config.max_upload_bytes:
+            return JSONResponse(
+                status_code=413,
+                content={
+                    "detail": (
+                        f"Request body is {declared} bytes; the maximum is "
+                        f"{config.max_upload_bytes}."
+                    )
+                },
+            )
+        return await call_next(request)
 
     @app.middleware("http")
     async def keep_responses_private(request: Request, call_next):
@@ -167,37 +265,30 @@ def create_app(config: Config | None = None) -> FastAPI:
             return requested
         return draft_theme or config.theme
 
-    def publish(
-        stored: str,
-        served_bytes: int,
-        title: str,
-        filename: str | None,
-        source_format: str,
-        theme: str | None,
-        expires_at: int,
-        now: int,
-    ) -> dict:
-        if served_bytes > config.max_upload_bytes:
+    def as_draft(draft_id: str, prepared: Prepared, expires_at: int, created_at: int) -> Draft:
+        if prepared.served_bytes > config.max_upload_bytes:
             raise HTTPException(
                 status_code=413,
                 detail=(
-                    f"Rendered document is {served_bytes} bytes; the maximum is "
+                    f"Rendered document is {prepared.served_bytes} bytes; the maximum is "
                     f"{config.max_upload_bytes}."
                 ),
             )
-
-        draft = Draft(
-            id=new_draft_id(),
-            title=title,
-            filename=filename,
-            source_format=source_format,
-            theme=theme,
-            created_at=now,
+        return Draft(
+            id=draft_id,
+            title=prepared.title,
+            filename=prepared.filename,
+            source_format=prepared.source_format,
+            theme=prepared.theme,
+            created_at=created_at,
             expires_at=expires_at,
-            size_bytes=served_bytes,
-            content_hash=f"sha256:{hashlib.sha256(stored.encode('utf-8')).hexdigest()}",
+            size_bytes=prepared.served_bytes,
+            content_hash=f"sha256:{hashlib.sha256(prepared.stored.encode('utf-8')).hexdigest()}",
         )
-        store.write(draft.id, stored)
+
+    def publish(prepared: Prepared, expires_at: int, now: int) -> dict:
+        draft = as_draft(new_draft_id(), prepared, expires_at, now)
+        store.write(draft.id, prepared.stored)
         try:
             database.insert(draft)
         except Exception:
@@ -223,48 +314,55 @@ def create_app(config: Config | None = None) -> FastAPI:
     @app.post("/api/upload", status_code=201, dependencies=[Depends(require_token)])
     def upload_html(body: HtmlUpload) -> dict:
         now = int(time.time())
-        filename = safe_filename(body.filename)
-        return publish(
-            stored=body.html,
-            served_bytes=len(body.html.encode("utf-8")),
-            title=title_from_filename(filename) or "Untitled draft",
-            filename=filename,
-            source_format="html",
-            theme=None,
-            expires_at=resolve_expiry(body.ttl_seconds, now),
-            now=now,
-        )
+        return publish(prepare_html(body), resolve_expiry(body.ttl_seconds, now), now)
 
     @app.post("/api/upload/markdown", status_code=201, dependencies=[Depends(require_token)])
     def upload_markdown(body: MarkdownUpload) -> dict:
         now = int(time.time())
-        if body.theme is not None and body.theme not in THEMES:
-            raise HTTPException(
-                status_code=422, detail=f"theme must be one of {', '.join(THEMES)}."
-            )
-
         expires_at = resolve_expiry(body.ttl_seconds, now)
-        filename = safe_filename(body.filename)
-        rendered = render_markdown(body.markdown)
-        title = (
-            (body.title or "").strip()
-            or rendered.title
-            or title_from_filename(filename)
-            or "Untitled draft"
-        )
-        return publish(
-            stored=rendered.html,
-            # The auto palette carries both light and dark rules, so it bounds every theme.
-            served_bytes=len(
-                render_markdown_document(rendered.html, title, expires_at, "auto").encode("utf-8")
-            ),
-            title=title,
-            filename=filename,
-            source_format="markdown",
-            theme=body.theme,
-            expires_at=expires_at,
-            now=now,
-        )
+        return publish(prepare_markdown(body, expires_at, config.display_zone), expires_at, now)
+
+    def republish(existing: Draft, prepared: Prepared, expires_at: int, now: int) -> dict:
+        draft = as_draft(existing.id, prepared, expires_at, existing.created_at)
+        previous = store.read(draft.id)
+        store.write(draft.id, prepared.stored)
+        try:
+            database.replace(draft)
+        except Exception:
+            if previous is not None:
+                store.write(draft.id, previous)
+            raise
+        return draft_summary(draft, config, now)
+
+    def require_live_draft(draft_id: str, now: int) -> Draft:
+        """Expired ids are gone for good; reviving one would resurrect a link that leaked."""
+        existing = database.find_live(draft_id, now) if is_draft_id(draft_id) else None
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Draft not found.")
+        return existing
+
+    @app.put("/api/drafts/{draft_id}/html", dependencies=[Depends(require_token)])
+    def replace_with_html(draft_id: str, body: HtmlUpload) -> dict:
+        now = int(time.time())
+        existing = require_live_draft(draft_id, now)
+        return republish(existing, prepare_html(body), resolve_expiry(body.ttl_seconds, now), now)
+
+    @app.put("/api/drafts/{draft_id}/markdown", dependencies=[Depends(require_token)])
+    def replace_with_markdown(draft_id: str, body: MarkdownUpload) -> dict:
+        now = int(time.time())
+        existing = require_live_draft(draft_id, now)
+        expires_at = resolve_expiry(body.ttl_seconds, now)
+        prepared = prepare_markdown(body, expires_at, config.display_zone)
+        return republish(existing, prepared, expires_at, now)
+
+    @app.patch("/api/drafts/{draft_id}", dependencies=[Depends(require_token)])
+    def extend_draft(draft_id: str, body: ExpiryUpdate) -> dict:
+        """Buy more time on a draft you are still reading, without minting a new link."""
+        now = int(time.time())
+        existing = require_live_draft(draft_id, now)
+        expires_at = resolve_expiry(body.ttl_seconds, now)
+        database.set_expiry(existing.id, expires_at)
+        return draft_summary(replace(existing, expires_at=expires_at), config, now)
 
     @app.get("/api/drafts", dependencies=[Depends(require_token)])
     def list_drafts() -> dict:
@@ -273,12 +371,19 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     @app.delete("/api/drafts/{draft_id}", dependencies=[Depends(require_token)])
     def delete_draft(draft_id: str) -> dict:
-        if not is_draft_id(draft_id) or not database.delete(draft_id):
+        now = int(time.time())
+        if not is_draft_id(draft_id) or not database.delete(draft_id, now):
             raise HTTPException(status_code=404, detail="Draft not found.")
         store.delete(draft_id)
         return {"ok": True}
 
-    @app.get("/d/{draft_id}", response_class=HTMLResponse)
+    def gone_page(draft_id: str, theme: str, now: int) -> str:
+        removed_at = database.removed_at(draft_id, now) if is_draft_id(draft_id) else None
+        if removed_at is None:
+            return render_not_found(theme)
+        return render_expired(theme, removed_at, config.display_zone)
+
+    @app.api_route("/d/{draft_id}", methods=["GET", "HEAD"], response_class=HTMLResponse)
     def view_draft(draft_id: str, theme: str | None = None) -> HTMLResponse:
         now = int(time.time())
         draft = database.find_live(draft_id, now) if is_draft_id(draft_id) else None
@@ -287,7 +392,7 @@ def create_app(config: Config | None = None) -> FastAPI:
             if draft:
                 logger.error("draft row without stored body", extra={"draft_id": draft.id})
             return HTMLResponse(
-                render_not_found(resolve_theme(theme, None)),
+                gone_page(draft_id, resolve_theme(theme, None), now),
                 status_code=404,
                 headers=PRIVATE_HEADERS,
             )
@@ -296,7 +401,11 @@ def create_app(config: Config | None = None) -> FastAPI:
             return HTMLResponse(stored, headers=DRAFT_HEADERS)
         return HTMLResponse(
             render_markdown_document(
-                stored, draft.title, draft.expires_at, resolve_theme(theme, draft.theme)
+                stored,
+                draft.title,
+                draft.expires_at,
+                resolve_theme(theme, draft.theme),
+                config.display_zone,
             ),
             headers=DRAFT_HEADERS,
         )

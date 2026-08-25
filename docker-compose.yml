@@ -7,6 +7,17 @@ services:
       - draftbin-data:/data
     ports:
       - "9600:8000"
+    # The slim image has no curl, so the probe goes through the interpreter that is there.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/healthz").read()
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
 volumes:
   draftbin-data:

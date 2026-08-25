@@ -1,7 +1,13 @@
-from datetime import datetime, timezone
+from datetime import datetime
 from html import escape
+from zoneinfo import ZoneInfo
 
 from pygments.formatters import HtmlFormatter
+
+from draftbin.html_document import Heading, outline
+
+# Below this a contents list is longer than the navigation it saves.
+MINIMUM_OUTLINE_ENTRIES = 3
 
 LIGHT_VARS = """
   --bg: #fdfdfc;
@@ -173,6 +179,31 @@ hr {
   color: var(--muted);
 }
 
+.draft-contents {
+  margin: 0 0 2.5em;
+  padding: 0.6em 1.1em;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  font-size: 0.92em;
+}
+
+.draft-contents summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.draft-contents ul {
+  list-style: none;
+  margin: 0.7em 0 0.2em;
+  padding-left: 0;
+}
+
+.draft-contents li { margin: 0.25em 0; }
+.draft-contents li.depth-3 { padding-left: 1.3em; }
+.draft-contents a { text-decoration: none; }
+.draft-contents a:hover { text-decoration: underline; }
+
 .draft-meta {
   margin-top: 4em;
   padding-top: 1em;
@@ -186,7 +217,7 @@ hr {
   main { max-width: none; padding: 0; }
   pre, code, blockquote, th { background: none; }
   pre, blockquote { border: 1px solid #ccc; }
-  .draft-meta, .heading-anchor { display: none; }
+  .draft-meta, .heading-anchor, .draft-contents { display: none; }
 }
 """
 
@@ -214,11 +245,9 @@ def theme_css(theme: str) -> str:
     )
 
 
-def format_timestamp(epoch_seconds: int) -> str:
-    return (
-        datetime.fromtimestamp(epoch_seconds, tz=timezone.utc)
-        .strftime("%Y-%m-%d %H:%M UTC")
-    )
+def format_timestamp(epoch_seconds: int, zone: ZoneInfo) -> str:
+    """Reader-facing dates only. The API keeps reporting UTC, which is what machines want."""
+    return datetime.fromtimestamp(epoch_seconds, tz=zone).strftime("%Y-%m-%d %H:%M %Z")
 
 
 def render_page(title: str, body_html: str, theme: str) -> str:
@@ -243,12 +272,30 @@ def render_page(title: str, body_html: str, theme: str) -> str:
 """
 
 
-def render_markdown_document(body_html: str, title: str, expires_at: int, theme: str) -> str:
+def render_contents(headings: list[Heading]) -> str:
+    """A disclosure element, because navigation has to work with no JavaScript at all."""
+    if len(headings) < MINIMUM_OUTLINE_ENTRIES:
+        return ""
+    items = "\n".join(
+        f'<li class="depth-{heading.level}">'
+        f'<a href="#{escape(heading.anchor, quote=True)}">{escape(heading.text)}</a></li>'
+        for heading in headings
+    )
+    return (
+        '<details class="draft-contents" open><summary>Contents</summary>\n'
+        f"<ul>\n{items}\n</ul>\n</details>\n"
+    )
+
+
+def render_markdown_document(
+    body_html: str, title: str, expires_at: int, theme: str, zone: ZoneInfo
+) -> str:
     meta = (
         '<p class="draft-meta">Published with draftbin &middot; link expires '
-        f"{format_timestamp(expires_at)}</p>"
+        f"{format_timestamp(expires_at, zone)}</p>"
     )
-    return render_page(title, f"{body_html}\n{meta}", theme)
+    contents = render_contents(outline(body_html))
+    return render_page(title, f"{contents}{body_html}\n{meta}", theme)
 
 
 def render_landing(public_base_url: str, default_ttl_seconds: int, theme: str) -> str:
@@ -279,6 +326,22 @@ def render_not_found(theme: str) -> str:
 <h1>Not found</h1>
 <p>This draft does not exist, or its link has expired. Expired drafts are deleted
 and cannot be recovered &mdash; publish again to get a new link.</p>
+""",
+        theme,
+    )
+
+
+def render_expired(theme: str, removed_at: int, zone: ZoneInfo) -> str:
+    """Says the link worked once, which "not found" cannot: a dead link then reads as
+    expired rather than as a typo somewhere between here and the note it came from."""
+    return render_page(
+        "Expired",
+        f"""
+<h1>Expired</h1>
+<p>This draft was published and is no longer available. It was removed on
+{format_timestamp(removed_at, zone)}.</p>
+<p>Expired drafts are deleted and cannot be recovered &mdash; publish again to get a
+new link.</p>
 """,
         theme,
     )

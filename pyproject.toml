@@ -9,6 +9,8 @@ dependencies = [
     "markdown-it-py>=3.0",
     "mdit-py-plugins>=0.4",
     "pygments>=2.18",
+    # zoneinfo has no database of its own on Windows, and slim images may not ship one.
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]
@@ -26,3 +28,7 @@ include = ["draftbin*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Test modules import shared fixtures as `tests.conftest`, which only resolves when the
+# project root is importable. `python -m pytest` adds it implicitly; a bare `pytest`
+# does not, so say it here rather than depending on how the suite is invoked.
+pythonpath = ["."]

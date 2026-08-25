@@ -74,12 +74,35 @@ def test_untitled_markdown_gets_a_generic_title(client):
     assert response.json()["title"] == "Untitled draft"
 
 
+def test_long_markdown_drafts_get_a_contents_list(client):
+    markdown = "# Plan\n\n## Background\n\n## Approach\n\n### Step one\n\n## Risks\n"
+    response = client.post("/api/upload/markdown", json={"markdown": markdown}, headers=AUTH)
+
+    view = client.get(f"/d/{response.json()['id']}")
+    assert 'class="draft-contents"' in view.text
+    assert '<a href="#approach">Approach</a>' in view.text
+
+
+def test_short_markdown_drafts_get_no_contents_list(client):
+    markdown = "# Plan\n\n## Only section\n\ntext\n"
+    response = client.post("/api/upload/markdown", json={"markdown": markdown}, headers=AUTH)
+
+    view = client.get(f"/d/{response.json()['id']}")
+    assert "<summary>Contents</summary>" not in view.text
+
+
 def test_raw_html_in_markdown_cannot_execute(client):
+    """Two independent barriers: the tag never reaches the page, and the CSP would stop it.
+
+    The second matters because a draft saved to disk and reopened from file:// has no CSP.
+    """
     response = client.post(
         "/api/upload/markdown",
         json={"markdown": "<script>alert(1)</script>\n"},
         headers=AUTH,
     )
     view = client.get(f"/d/{response.json()['id']}")
+    assert "<script>" not in view.text
+    assert "&lt;script&gt;" in view.text
     assert "sandbox" in view.headers["content-security-policy"]
     assert "default-src 'none'" in view.headers["content-security-policy"]

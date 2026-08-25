@@ -1,4 +1,7 @@
+import os
 from pathlib import Path
+
+TEMPORARY_SUFFIX = ".tmp"
 
 
 class HtmlStore:
@@ -12,7 +15,22 @@ class HtmlStore:
         return self.root / f"{draft_id}.html"
 
     def write(self, draft_id: str, html: str) -> None:
-        self.path_for(draft_id).write_text(html, encoding="utf-8")
+        """Rename into place so a crash mid-write leaves the old body, not half the new one.
+
+        Replacing a draft reuses its id, so the target often already exists and a reader
+        can be part way through it.
+        """
+        destination = self.path_for(draft_id)
+        staged = destination.with_name(destination.name + TEMPORARY_SUFFIX)
+        staged.write_text(html, encoding="utf-8")
+        os.replace(staged, destination)
+
+    def stored_ids(self) -> set[str]:
+        return {path.stem for path in self.root.glob("*.html")}
+
+    def discard_staged_writes(self) -> None:
+        for path in self.root.glob(f"*{TEMPORARY_SUFFIX}"):
+            path.unlink(missing_ok=True)
 
     def read(self, draft_id: str) -> str | None:
         path = self.path_for(draft_id)

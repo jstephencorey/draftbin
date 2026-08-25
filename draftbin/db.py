@@ -17,6 +17,15 @@ CREATE TABLE IF NOT EXISTS drafts (
     content_hash  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS drafts_expires_at ON drafts (expires_at);
+
+-- Records that an id once existed and when it stopped resolving, so a stale link can
+-- say "this expired" instead of being indistinguishable from a typo. Content is never
+-- kept here; the row is an id and a timestamp.
+CREATE TABLE IF NOT EXISTS tombstones (
+    id         TEXT PRIMARY KEY,
+    removed_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS tombstones_removed_at ON tombstones (removed_at);
 """
 
 
@@ -92,6 +101,34 @@ class Database:
                 ),
             )
 
+    def replace(self, draft: Draft) -> None:
+        """Everything but the id and the original publication date is overwritten."""
+        with self.connect() as connection:
+            connection.execute(
+                """
+                UPDATE drafts SET
+                    title = ?, filename = ?, source_format = ?, theme = ?,
+                    expires_at = ?, size_bytes = ?, content_hash = ?
+                WHERE id = ?
+                """,
+                (
+                    draft.title,
+                    draft.filename,
+                    draft.source_format,
+                    draft.theme,
+                    draft.expires_at,
+                    draft.size_bytes,
+                    draft.content_hash,
+                    draft.id,
+                ),
+            )
+
+    def set_expiry(self, draft_id: str, expires_at: int) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE drafts SET expires_at = ? WHERE id = ?", (expires_at, draft_id)
+            )
+
     def find_live(self, draft_id: str, now: int) -> Draft | None:
         with self.connect() as connection:
             row = connection.execute(
@@ -106,9 +143,16 @@ class Database:
             ).fetchall()
         return [Draft(**row) for row in rows]
 
-    def delete(self, draft_id: str) -> bool:
+    def all_ids(self) -> set[str]:
+        with self.connect() as connection:
+            rows = connection.execute("SELECT id FROM drafts").fetchall()
+        return {row["id"] for row in rows}
+
+    def delete(self, draft_id: str, now: int) -> bool:
         with self.connect() as connection:
             cursor = connection.execute("DELETE FROM drafts WHERE id = ?", (draft_id,))
+            if cursor.rowcount:
+                self.entomb(connection, [draft_id], now)
         return cursor.rowcount > 0
 
     def take_expired_ids(self, now: int) -> list[str]:
@@ -116,4 +160,35 @@ class Database:
             rows = connection.execute(
                 "DELETE FROM drafts WHERE expires_at <= ? RETURNING id", (now,)
             ).fetchall()
-        return [row["id"] for row in rows]
+            expired = [row["id"] for row in rows]
+            self.entomb(connection, expired, now)
+        return expired
+
+    def entomb(self, connection: sqlite3.Connection, draft_ids: list[str], now: int) -> None:
+        connection.executemany(
+            "INSERT OR REPLACE INTO tombstones (id, removed_at) VALUES (?, ?)",
+            [(draft_id, now) for draft_id in draft_ids],
+        )
+
+    def removed_at(self, draft_id: str, now: int) -> int | None:
+        """When an id stopped resolving, whether the sweeper has reached it yet or not.
+
+        Expiry is enforced at read time, so a row can be past its date and still present.
+        """
+        with self.connect() as connection:
+            lapsed = connection.execute(
+                "SELECT expires_at FROM drafts WHERE id = ? AND expires_at <= ?", (draft_id, now)
+            ).fetchone()
+            if lapsed:
+                return lapsed["expires_at"]
+            tombstone = connection.execute(
+                "SELECT removed_at FROM tombstones WHERE id = ?", (draft_id,)
+            ).fetchone()
+        return tombstone["removed_at"] if tombstone else None
+
+    def purge_tombstones(self, before: int) -> int:
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM tombstones WHERE removed_at <= ?", (before,)
+            )
+        return cursor.rowcount

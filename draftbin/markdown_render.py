@@ -11,6 +11,8 @@ from pygments.formatters import HtmlFormatter
 from pygments.lexers import get_lexer_by_name, guess_lexer
 from pygments.util import ClassNotFound
 
+from draftbin.sanitize import sanitize_html
+
 TEXT_TOKEN_TYPES = frozenset({"text", "code_inline"})
 
 
@@ -21,6 +23,21 @@ def highlight_code(code: str, language: str, _attrs: str) -> str:
         return ""
     formatter = HtmlFormatter(nowrap=True)
     return f'<pre class="highlight"><code>{highlight(code, lexer, formatter)}</code></pre>'
+
+
+def sanitized_raw_html(parser: MarkdownIt) -> None:
+    """CommonMark passes raw HTML through untouched; filter it to an allowlist instead.
+
+    Only author-supplied HTML goes through the sanitizer. Everything markdown-it generates
+    itself — task list checkboxes, heading anchors, Pygments spans — is emitted by other
+    rules and never sees it.
+    """
+
+    def render_raw(self, tokens, idx, options, env) -> str:
+        return sanitize_html(tokens[idx].content)
+
+    parser.add_render_rule("html_block", render_raw)
+    parser.add_render_rule("html_inline", render_raw)
 
 
 def scrollable_tables(parser: MarkdownIt) -> None:
@@ -39,6 +56,7 @@ def build_parser() -> MarkdownIt:
     parser.use(anchors_plugin, max_level=4, permalink=True, permalinkSymbol="#").use(
         tasklists_plugin
     ).use(footnote_plugin).use(deflist_plugin)
+    sanitized_raw_html(parser)
     scrollable_tables(parser)
     return parser
 

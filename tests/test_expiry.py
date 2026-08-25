@@ -1,5 +1,8 @@
 import time
 
+from fastapi.testclient import TestClient
+
+from draftbin.app import create_app
 from tests.conftest import AUTH
 
 
@@ -48,3 +51,21 @@ def test_sweeping_twice_is_harmless(client, app, monkeypatch):
     advance(monkeypatch, 61)
     assert app.state.sweep_expired() == 1
     assert app.state.sweep_expired() == 0
+
+
+def test_startup_deletes_a_file_whose_row_is_gone(client, app, config):
+    """A crash between the row delete and the file delete would otherwise strand it forever."""
+    stranded = app.state.store.path_for("aaaaaaaaaaaaaaaaaaaaaa")
+    stranded.write_text("<p>no row points at me</p>", encoding="utf-8")
+
+    with TestClient(create_app(config)):
+        pass
+
+    assert not stranded.is_file()
+
+
+def test_startup_keeps_files_that_still_have_a_row(client, app, config):
+    draft_id = upload(client, ttl_seconds=3600)
+
+    with TestClient(create_app(config)) as restarted:
+        assert restarted.get(f"/d/{draft_id}").status_code == 200
