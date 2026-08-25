@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from draftbin.config import Config, load_config
 from draftbin.db import Database, Draft
+from draftbin.html_document import document_title
 from draftbin.ids import is_draft_id, new_draft_id
 from draftbin.markdown_render import render_markdown
 from draftbin.storage import HtmlStore
@@ -265,7 +266,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         return publish(
             stored=body.html,
             served_bytes=len(body.html.encode("utf-8")),
-            title=title_from_filename(filename) or "Untitled draft",
+            title=document_title(body.html) or title_from_filename(filename) or "Untitled draft",
             filename=filename,
             source_format="html",
             theme=None,

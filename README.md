@@ -67,8 +67,10 @@ A chunked request carries no `Content-Length` and is only caught by the second c
 `theme`, and `ttl_seconds`. A `ttl_seconds` above the server maximum is rejected rather
 than silently clamped.
 
-Document titles resolve in order: explicit `title`, then the first `# ` heading, then
-the filename stem, then `Untitled draft`.
+Markdown titles resolve in order: explicit `title`, then the first `# ` heading, then
+the filename stem, then `Untitled draft`. HTML uploads have no `title` field — the
+document names itself, so the `<title>` element is read out of it, falling back to the
+filename stem and then `Untitled draft`.
 
 ## Theming
 
