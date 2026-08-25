@@ -3,7 +3,7 @@
 [![tests](https://github.com/jstephencorey/draftbin/actions/workflows/tests.yml/badge.svg)](https://github.com/jstephencorey/draftbin/actions/workflows/tests.yml)
 
 Self-hosted ephemeral publishing for agent-generated documents. Post HTML or markdown,
-get back an unlisted URL you can open anywhere, and have it delete itself after a day.
+get back an unlisted URL you can open anywhere, and have it delete itself in two days.
 
 Built for the workflow where a coding agent produces a plan, an analysis, or a day's
 writing, and you want to _read_ it in a browser instead of scrolling a terminal.
@@ -212,7 +212,7 @@ Only the CSP is draft-specific.
 | `DRAFTBIN_THEME`                  | `auto`                  | Default theme; `?theme=` overrides per view |
 | `DRAFTBIN_TIMEZONE`               | `UTC`                   | IANA zone for dates shown to readers        |
 | `DRAFTBIN_DATA_DIR`               | `.local`                | `/data` in the container                    |
-| `DRAFTBIN_DEFAULT_TTL_SECONDS`    | `86400`                 | 24 hours                                    |
+| `DRAFTBIN_DEFAULT_TTL_SECONDS`    | `172800`                | 48 hours                                    |
 | `DRAFTBIN_MAX_TTL_SECONDS`        | `604800`                | 7 days; caps per-upload overrides           |
 | `DRAFTBIN_MAX_UPLOAD_BYTES`       | `2097152`               | 2 MiB; bounds the request and the document  |
 | `DRAFTBIN_SWEEP_INTERVAL_SECONDS` | `300`                   | How often expired drafts are deleted        |

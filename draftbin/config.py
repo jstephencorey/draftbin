@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from draftbin.templates import THEMES
 
-DEFAULT_TTL_SECONDS = 24 * 60 * 60
+DEFAULT_TTL_SECONDS = 48 * 60 * 60
 DEFAULT_MAX_TTL_SECONDS = 7 * 24 * 60 * 60
 DEFAULT_MAX_UPLOAD_BYTES = 2 * 1024 * 1024
 DEFAULT_SWEEP_INTERVAL_SECONDS = 5 * 60

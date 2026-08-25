@@ -1,3 +1,4 @@
+from draftbin.config import DEFAULT_TTL_SECONDS
 from tests.conftest import AUTH
 
 
@@ -11,7 +12,7 @@ def test_listing_returns_newest_first(client):
 
     drafts = client.get("/api/drafts", headers=AUTH).json()["drafts"]
     assert {draft["id"] for draft in drafts} == {first["id"], second["id"]}
-    assert drafts[0]["expires_in_seconds"] <= 86400
+    assert drafts[0]["expires_in_seconds"] <= DEFAULT_TTL_SECONDS
 
 
 def test_delete_removes_the_draft_and_its_file(client, app):

@@ -2,7 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from draftbin.app import create_app
-from draftbin.config import Config
+from draftbin.config import DEFAULT_MAX_TTL_SECONDS, DEFAULT_TTL_SECONDS, Config
 
 TOKEN = "test-token-with-enough-length"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
@@ -14,8 +14,8 @@ def config(tmp_path) -> Config:
         token=TOKEN,
         public_base_url="https://drafts.example.com",
         data_dir=tmp_path,
-        default_ttl_seconds=86400,
-        max_ttl_seconds=604800,
+        default_ttl_seconds=DEFAULT_TTL_SECONDS,
+        max_ttl_seconds=DEFAULT_MAX_TTL_SECONDS,
         max_upload_bytes=2 * 1024 * 1024,
         sweep_interval_seconds=3600,
     )

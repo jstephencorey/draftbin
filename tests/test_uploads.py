@@ -1,3 +1,4 @@
+from draftbin.config import DEFAULT_TTL_SECONDS
 from tests.conftest import AUTH
 
 HTML_DOC = "<!doctype html><html><head><title>Plan</title></head><body><h1>Plan</h1></body></html>"
@@ -23,7 +24,7 @@ def test_html_upload_returns_a_viewable_url(client):
     body = response.json()
     assert body["url"] == f"https://drafts.example.com/d/{body['id']}"
     assert body["title"] == "Plan"
-    assert body["expires_in_seconds"] == 86400
+    assert body["expires_in_seconds"] == DEFAULT_TTL_SECONDS
 
     view = client.get(f"/d/{body['id']}")
     assert view.status_code == 200
