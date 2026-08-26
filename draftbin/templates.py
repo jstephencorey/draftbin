@@ -7,6 +7,7 @@ from pygments.formatters import HtmlFormatter
 
 from draftbin.fonts import FONT_FACE_CSS
 from draftbin.html_document import Heading, outline
+from draftbin.icons import ICON_LINK_TAGS
 
 # Below this a contents list is longer than the navigation it saves.
 MINIMUM_OUTLINE_ENTRIES = 3
@@ -343,6 +344,7 @@ def render_page(title: str, body_html: str, theme: str) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow, noarchive">
 <title>{escape(title)}</title>
+{ICON_LINK_TAGS}
 <style>
 {FONT_FACE_CSS}
 {theme_css(theme)}
