@@ -119,6 +119,8 @@ Uploads and management need `Authorization: Bearer $DRAFTBIN_TOKEN`. Viewing doe
 | `GET`    | `/`                    | Landing page and paste box                |
 | `POST`   | `/paste`               | Publish from the paste box (form-encoded) |
 | `GET`    | `/static/fonts/{file}` | The reading face (public, cacheable)      |
+| `GET`    | `/favicon.ico`         | Tab icon, for browsers that go looking     |
+| `GET`    | `/static/icons/icon.svg` | Tab icon, at any size                   |
 | `GET`    | `/healthz`             | Liveness probe                            |
 
 `DRAFTBIN_MAX_UPLOAD_BYTES` is enforced twice: against `Content-Length` before the
@@ -198,6 +200,18 @@ platform worth caring about. That is the trade for not inlining ~270KB of base64
 every document, and the fallback stack is chosen so the saved copy still reads properly.
 The same applies to self-contained HTML uploads, which own their own styling anyway.
 
+### The tab icon
+
+An open book on the same brown, shipped twice. `icon.svg` is named in the `<head>` of
+every page built by `render_page` and stays sharp at any size; `favicon.ico` is a
+rasterised copy of it at 16, 32, 48 and 64 pixels. The ICO earns its place because an
+HTML upload is served back byte for byte — nothing can be added to its `<head>`, so the
+browser's own probe of `/favicon.ico` is the only icon those drafts will ever get. If the
+artwork changes, redraw the ICO from the SVG.
+
+Favicons are fetched under `img-src`, which is why that directive names the origin the
+same way `font-src` does.
+
 ## Theming
 
 Markdown drafts store only a rendered body fragment; the document shell is assembled
@@ -232,7 +246,8 @@ Drafts are served with:
 ```
 Content-Security-Policy: sandbox allow-popups allow-popups-to-escape-sandbox;
   default-src 'none'; style-src 'unsafe-inline'; font-src 'self' <base-url>;
-  img-src https: data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  img-src 'self' <base-url> https: data:; base-uri 'none'; form-action 'none';
+  frame-ancestors 'none'
 Cache-Control: no-store, private, must-revalidate
 Referrer-Policy: no-referrer
 X-Robots-Tag: noindex, nofollow, noarchive, nosnippet
