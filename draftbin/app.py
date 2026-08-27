@@ -24,6 +24,7 @@ from draftbin.config import Config, load_config
 from draftbin.db import Database, Draft
 from draftbin.fonts import FONT_CACHE_CONTROL, font_path
 from draftbin.html_document import document_title
+from draftbin.icons import ICO_ICON, ICON_CACHE_CONTROL, SVG_ICON, SVG_ICON_URL
 from draftbin.ids import is_draft_id, new_draft_id
 from draftbin.markdown_render import render_markdown
 from draftbin.storage import HtmlStore
@@ -56,7 +57,8 @@ def draft_csp(public_base_url: str) -> str:
             # have not always agreed on whether 'self' still names this host afterwards.
             # Spelling the origin out removes the question.
             f"font-src 'self' {public_base_url}",
-            "img-src https: data:",
+            # The tab icon is fetched under img-src, so the same reasoning applies to it.
+            f"img-src 'self' {public_base_url} https: data:",
             "base-uri 'none'",
             "form-action 'none'",
             "frame-ancestors 'none'",
@@ -412,6 +414,23 @@ def create_app(config: Config | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Not found.")
         return FileResponse(
             path, media_type="font/woff2", headers={"Cache-Control": FONT_CACHE_CONTROL}
+        )
+
+    @app.api_route("/favicon.ico", methods=["GET", "HEAD"])
+    def favicon() -> FileResponse:
+        """Where a browser looks by itself, which is the only icon an HTML draft gets."""
+        return FileResponse(
+            ICO_ICON,
+            media_type="image/x-icon",
+            headers={"Cache-Control": ICON_CACHE_CONTROL},
+        )
+
+    @app.api_route(SVG_ICON_URL, methods=["GET", "HEAD"])
+    def icon_svg() -> FileResponse:
+        return FileResponse(
+            SVG_ICON,
+            media_type="image/svg+xml",
+            headers={"Cache-Control": ICON_CACHE_CONTROL},
         )
 
     @app.get("/healthz")

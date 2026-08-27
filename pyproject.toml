@@ -29,7 +29,12 @@ build-backend = "setuptools.build_meta"
 include = ["draftbin*"]
 
 [tool.setuptools.package-data]
-draftbin = ["static/fonts/*.woff2", "static/fonts/OFL.txt"]
+draftbin = [
+    "static/fonts/*.woff2",
+    "static/fonts/OFL.txt",
+    "static/icons/icon.svg",
+    "static/icons/favicon.ico",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
