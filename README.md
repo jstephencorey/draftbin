@@ -2,8 +2,9 @@
 
 [![tests](https://github.com/jstephencorey/draftbin/actions/workflows/tests.yml/badge.svg)](https://github.com/jstephencorey/draftbin/actions/workflows/tests.yml)
 
-Self-hosted ephemeral publishing for agent-generated documents. Post HTML or markdown,
-get back an unlisted URL you can open anywhere, and have it delete itself in two days.
+Self-hosted private publishing for agent-generated documents. Post HTML or markdown, get
+back a URL you can open on any device that holds your token, and have it delete itself in
+a month.
 
 Built for the workflow where a coding agent produces a plan, an analysis, or a day's
 writing, and you want to _read_ it in a browser instead of scrolling a terminal.
@@ -35,24 +36,47 @@ yourself the link, and open it on a phone.
 [eff]: https://www.eff.org/dice
 
 The trade is keyspace. Two words is about 1.7 million combinations, against 128 bits for
-the ids minted before the change, and that is small enough to enumerate. It is not what
-keeps a draft private — expiry is, and the reasoning below is unchanged. Do not publish
-anything whose exposure you would actually mind.
+the ids minted before the change, and that is small enough to enumerate. That no longer
+matters much, because the id is not the credential: reading a draft takes the token. See
+"Reading takes the token" below.
 
 Ids are checked against live drafts **and** tombstones before being handed out, so an id
 retires permanently. Reissuing one would silently point a link somebody still holds at
 unrelated content. Ids minted before the switch still resolve, so links already written
 into notes keep working.
 
-## Why links expire
+## Reading takes the token
 
-Draft URLs are public and unlisted: possession of the link is the only authorization.
-That is a deliberate trade for convenience, and expiry is what makes it tolerable. It
-bounds how long a leaked link stays useful and keeps internal content from
-accumulating on a public-facing host.
+`GET /d/{id}` answers `401` and a token form unless the request carries the token, either
+as the `draftbin_token` cookie or as a bearer header. Enter it once and the cookie keeps
+that device unlocked for 30 days. It is the same `DRAFTBIN_TOKEN` that publishes, so
+anyone you hand it to can publish and delete too — this is a single-user server.
 
-It does **not** protect content that leaks and gets read inside the window, and it
-cannot un-read a page someone already fetched. Publish accordingly.
+Three details that are easy to get wrong:
+
+- **The gate runs before the lookup.** Every well-formed id gets the same reply whether
+  or not a draft is behind it. Prompting only for ids that resolve would let a scanner map
+  a 1.7-million-id keyspace without ever holding the token.
+- **The token form cannot be served under the draft CSP.** Draft responses set `sandbox`
+  and `form-action 'none'`, which would leave the gate page unable to submit the very form
+  that unlocks it. The gate carries the ordinary private headers instead.
+- **The cookie is `SameSite=Lax`, not `Strict`.** Strict withholds the cookie when a draft
+  link is clicked from another site, so an unlocked device would be asked for the token
+  every time it arrived from Slack or webmail. Lax rides along on top-level navigation and
+  is still withheld on cross-site `POST`, which is the request a hostile page would have to
+  forge to publish on your behalf.
+
+Nothing is retroactive: this protects drafts from here on, not links already shared.
+
+## Why links still expire
+
+Expiry used to be the only thing keeping a draft private, which is why the default was
+measured in hours. Now that reading takes the token, expiry is housekeeping rather than
+access control — it stops content accumulating on a public-facing host and limits what a
+later compromise would expose. That is why the default is 30 days and the ceiling a year.
+
+It cannot un-read a page someone already fetched, and it does not protect content behind
+a token you have handed out. Publish accordingly.
 
 Expiry is enforced two ways, and both matter:
 
@@ -103,7 +127,9 @@ was once a draft. Set the retention to something short if that is not a trade yo
 
 ## API
 
-Uploads and management need `Authorization: Bearer $DRAFTBIN_TOKEN`. Viewing does not.
+Everything but the landing page, the static assets, and `/healthz` needs the token. The
+API endpoints take it as `Authorization: Bearer $DRAFTBIN_TOKEN`; the reader-facing pages
+take either that or the `draftbin_token` cookie.
 
 | Method   | Path                   | Purpose                                   |
 | -------- | ---------------------- | ----------------------------------------- |
@@ -114,14 +140,21 @@ Uploads and management need `Authorization: Bearer $DRAFTBIN_TOKEN`. Viewing doe
 | `PATCH`  | `/api/drafts/{id}`     | Push a live draft's expiry out             |
 | `GET`    | `/api/drafts`          | List live drafts with their expiry times  |
 | `DELETE` | `/api/drafts/{id}`     | Delete a draft before it expires          |
-| `GET`    | `/d/{id}?theme=`       | View a draft (public, unlisted, expiring) |
+| `GET`    | `/d/{id}?theme=`       | View a draft, or the token form           |
 | `HEAD`   | `/d/{id}`              | Check a link without fetching the body    |
+| `POST`   | `/d/{id}`              | Unlock this device, then land on the draft |
+| `GET`    | `/drafts`              | Everything you have published, as a page  |
+| `POST`   | `/drafts`              | Unlock this device, then land on the list |
 | `GET`    | `/`                    | Landing page and paste box                |
 | `POST`   | `/paste`               | Publish from the paste box (form-encoded) |
 | `GET`    | `/static/fonts/{file}` | The reading face (public, cacheable)      |
 | `GET`    | `/favicon.ico`         | Tab icon, for browsers that go looking     |
 | `GET`    | `/static/icons/icon.svg` | Tab icon, at any size                   |
 | `GET`    | `/healthz`             | Liveness probe                            |
+
+`GET /drafts` is the reader-facing twin of `GET /api/drafts`: the same live drafts, newest
+first, as titles you can click rather than JSON. It is the answer to "what do I still have
+out there", which matters more now that drafts live for a month by default.
 
 `DRAFTBIN_MAX_UPLOAD_BYTES` is enforced twice: against `Content-Length` before the
 request is read, and against the rendered document before it is stored. The early check
@@ -152,24 +185,25 @@ text as markdown, publishes it, and redirects you to the new draft, so the URL l
 the address bar ready to share.
 
 A form cannot send an `Authorization` header without JavaScript, and the CSP rules that
-out, so the token arrives in a field once and then rides in a cookie:
+out, so the token arrives in a field once and then rides in a cookie — the same cookie
+that unlocks reading:
 
 ```
-Set-Cookie: draftbin_token=…; Max-Age=2592000; Path=/; HttpOnly; SameSite=Strict; Secure
+Set-Cookie: draftbin_token=…; Max-Age=2592000; Path=/; HttpOnly; SameSite=Lax; Secure
 ```
 
-`SameSite=Strict` is the one doing real work. Without it any web page could POST a form
-at `/paste` and the browser would attach the cookie, letting a third party publish to
-your bin; Strict withholds it on every cross-site request, top-level POSTs included.
-`HttpOnly` is belt-and-braces given there is no JavaScript anywhere here. `Secure` is set
-only when `DRAFTBIN_PUBLIC_BASE_URL` is `https://`, because a Secure cookie is dropped
-over plain http and that would break local development.
+`SameSite=Lax` withholds the cookie on cross-site `POST`, so no web page can post a form
+at `/paste` and have the browser publish to your bin. It deliberately stops short of
+`Strict`, which would also withhold it when you click your own draft link from another
+site — see "Reading takes the token". `HttpOnly` is belt-and-braces given there is no
+JavaScript anywhere here. `Secure` is set only when `DRAFTBIN_PUBLIC_BASE_URL` is
+`https://`, because a Secure cookie is dropped over plain http and that would break local
+development.
 
-Two things to be aware of. The cookie **is** the upload token, so it now exists in a
-browser's cookie jar as well as wherever you keep it, and anyone holding your unlocked
-phone can publish. And rotating the server token leaves a stale cookie behind — the next
-paste answers `401`, clears the cookie, and shows the token field again rather than
-looping.
+Two things to be aware of. The cookie **is** the token, so it exists in a browser's cookie
+jar as well as wherever you keep it, and anyone holding your unlocked phone can read and
+publish. And rotating the server token leaves a stale cookie behind — the next paste
+answers `401`, clears the cookie, and shows the token field again rather than looping.
 
 The redirect is relative, so whichever hostname you arrived on is the one you keep.
 
@@ -284,13 +318,13 @@ Only the CSP is draft-specific.
 
 | Variable                          | Default                 | Notes                                       |
 | --------------------------------- | ----------------------- | ------------------------------------------- |
-| `DRAFTBIN_TOKEN`                  | _required_              | Bearer token for uploads; 20+ chars         |
+| `DRAFTBIN_TOKEN`                  | _required_              | Token for reading and publishing; 20+ chars |
 | `DRAFTBIN_PUBLIC_BASE_URL`        | `http://localhost:8000` | Origin returned URLs are built from         |
 | `DRAFTBIN_THEME`                  | `auto`                  | Default theme; `?theme=` overrides per view |
 | `DRAFTBIN_TIMEZONE`               | `UTC`                   | IANA zone for dates shown to readers        |
 | `DRAFTBIN_DATA_DIR`               | `.local`                | `/data` in the container                    |
-| `DRAFTBIN_DEFAULT_TTL_SECONDS`    | `172800`                | 48 hours                                    |
-| `DRAFTBIN_MAX_TTL_SECONDS`        | `604800`                | 7 days; caps per-upload overrides           |
+| `DRAFTBIN_DEFAULT_TTL_SECONDS`    | `2592000`               | 30 days                                     |
+| `DRAFTBIN_MAX_TTL_SECONDS`        | `31536000`              | 365 days; caps per-upload overrides         |
 | `DRAFTBIN_MAX_UPLOAD_BYTES`       | `2097152`               | 2 MiB; bounds the request and the document  |
 | `DRAFTBIN_SWEEP_INTERVAL_SECONDS` | `300`                   | How often expired drafts are deleted        |
 | `DRAFTBIN_TOMBSTONE_RETENTION_SECONDS` | `2592000`          | 30 days; how long a dead ID says "expired"  |

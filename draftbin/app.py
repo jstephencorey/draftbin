@@ -30,11 +30,14 @@ from draftbin.markdown_render import render_markdown
 from draftbin.storage import HtmlStore
 from draftbin.templates import (
     THEMES,
+    IndexEntry,
     PasteForm,
     render_expired,
+    render_index,
     render_landing,
     render_markdown_document,
     render_not_found,
+    render_unlock,
 )
 
 logger = logging.getLogger("draftbin")
@@ -43,8 +46,8 @@ logger = logging.getLogger("draftbin")
 # Hitting this at single-user volumes would mean something is badly wrong.
 ID_ATTEMPTS = 12
 
-PASTE_COOKIE = "draftbin_token"
-PASTE_COOKIE_MAX_AGE = 30 * 24 * 60 * 60
+ACCESS_COOKIE = "draftbin_token"
+ACCESS_COOKIE_MAX_AGE = 30 * 24 * 60 * 60
 
 
 def draft_csp(public_base_url: str) -> str:
@@ -267,9 +270,16 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.store = store
     app.state.sweep_expired = sweep_expired
 
-    def require_token(authorization: str | None = Header(default=None)) -> None:
+    def bearer_matches(authorization: str | None) -> bool:
         expected = f"Bearer {config.token}"
-        if not authorization or not secrets.compare_digest(authorization, expected):
+        return (
+            bool(authorization)
+            and authorization.isascii()
+            and secrets.compare_digest(authorization, expected)
+        )
+
+    def require_token(authorization: str | None = Header(default=None)) -> None:
+        if not bearer_matches(authorization):
             raise HTTPException(status_code=401, detail="Invalid or missing API token.")
 
     def resolve_expiry(ttl_seconds: int | None, now: int) -> int:
@@ -328,7 +338,16 @@ def create_app(config: Config | None = None) -> FastAPI:
         return draft_summary(draft, config, now)
 
     def token_matches(candidate: str | None) -> bool:
-        return bool(candidate) and secrets.compare_digest(candidate, config.token)
+        """compare_digest raises on non-ASCII str, and a cookie is attacker-supplied on
+        every read now, so a crafted one must be a refusal rather than a 500."""
+        return (
+            bool(candidate)
+            and candidate.isascii()
+            and secrets.compare_digest(candidate, config.token)
+        )
+
+    def reader_is_known(authorization: str | None, cookie: str | None) -> bool:
+        return bearer_matches(authorization) or token_matches(cookie)
 
     def landing_page(form: PasteForm, status_code: int = 200) -> HTMLResponse:
         return HTMLResponse(
@@ -342,21 +361,70 @@ def create_app(config: Config | None = None) -> FastAPI:
     def remember_token(response: Response) -> Response:
         """Only ever called once the token has been checked, so the cookie is the token."""
         response.set_cookie(
-            PASTE_COOKIE,
+            ACCESS_COOKIE,
             config.token,
-            max_age=PASTE_COOKIE_MAX_AGE,
+            max_age=ACCESS_COOKIE_MAX_AGE,
             path="/",
             httponly=True,
-            # Withholds the cookie on cross-site requests, top-level POSTs included, so a
-            # hostile page cannot make the browser publish on Joseph's behalf.
-            samesite="strict",
+            # Lax rather than Strict, now that reading needs the cookie too: Strict would
+            # withhold it when a draft link is clicked from another site, so an unlocked
+            # device would still be asked for the token every time it arrived from Slack
+            # or webmail. Lax rides along on top-level navigation but is still withheld on
+            # cross-site POST, which is the request a hostile page would have to forge to
+            # publish on Joseph's behalf.
+            samesite="lax",
             secure=config.cookies_are_secure,
         )
         return response
 
+    def unlock_page(action: str, error: str | None, status_code: int) -> HTMLResponse:
+        """Carries PRIVATE_HEADERS and never draft_headers: the draft CSP sandboxes the
+        document onto an opaque origin and sets form-action 'none', so a gate page served
+        under it could not submit the very form that unlocks it."""
+        return HTMLResponse(
+            render_unlock(config.theme, action, error),
+            status_code=status_code,
+            headers=PRIVATE_HEADERS,
+        )
+
+    def unlock(action: str, token: str) -> Response:
+        if not token_matches(token.strip()):
+            return unlock_page(action, "That token was not accepted.", 401)
+        return remember_token(RedirectResponse(action, status_code=303))
+
     @app.get("/", response_class=HTMLResponse)
     def landing(draftbin_token: str | None = Cookie(default=None)) -> HTMLResponse:
         return landing_page(PasteForm(needs_token=not token_matches(draftbin_token)))
+
+    @app.post("/drafts")
+    def unlock_index(token: str = Form(default="")) -> Response:
+        return unlock("/drafts", token)
+
+    @app.get("/drafts", response_class=HTMLResponse)
+    def drafts_index(
+        theme: str | None = None,
+        authorization: str | None = Header(default=None),
+        draftbin_token: str | None = Cookie(default=None),
+    ) -> HTMLResponse:
+        """The reader-facing twin of GET /api/drafts, which still answers to a bearer."""
+        if not reader_is_known(authorization, draftbin_token):
+            return unlock_page("/drafts", None, 401)
+
+        now = int(time.time())
+        entries = [
+            IndexEntry(
+                id=draft.id,
+                title=draft.title,
+                created_at=draft.created_at,
+                expires_at=draft.expires_at,
+                size_bytes=draft.size_bytes,
+            )
+            for draft in database.list_live(now)
+        ]
+        return HTMLResponse(
+            render_index(entries, resolve_theme(theme, None), config.display_zone),
+            headers=PRIVATE_HEADERS,
+        )
 
     @app.post("/paste")
     def paste_draft(
@@ -385,7 +453,7 @@ def create_app(config: Config | None = None) -> FastAPI:
             )
             response = landing_page(PasteForm(text, title, True, message), status_code=401)
             if stale_cookie:
-                response.delete_cookie(PASTE_COOKIE, path="/")
+                response.delete_cookie(ACCESS_COOKIE, path="/")
             return response
 
         if not text.strip():
@@ -513,9 +581,26 @@ def create_app(config: Config | None = None) -> FastAPI:
             return render_not_found(theme)
         return render_expired(theme, removed_at, config.display_zone)
 
+    @app.post("/d/{draft_id}")
+    def unlock_draft(draft_id: str, token: str = Form(default="")) -> Response:
+        # A path param can never hold a slash, but only a well-formed id is worth echoing
+        # into a Location header at all.
+        return unlock(f"/d/{draft_id}" if is_draft_id(draft_id) else "/", token)
+
     @app.api_route("/d/{draft_id}", methods=["GET", "HEAD"], response_class=HTMLResponse)
-    def view_draft(draft_id: str, theme: str | None = None) -> HTMLResponse:
+    def view_draft(
+        draft_id: str,
+        theme: str | None = None,
+        authorization: str | None = Header(default=None),
+        draftbin_token: str | None = Cookie(default=None),
+    ) -> HTMLResponse:
         now = int(time.time())
+        if not reader_is_known(authorization, draftbin_token):
+            # Checked ahead of any lookup on purpose. Prompting only for ids that resolve
+            # would let a scanner map the whole keyspace without ever holding the token,
+            # and two words is only ~1.7M ids.
+            return unlock_page(f"/d/{draft_id}", None, 401)
+
         draft = database.find_live(draft_id, now) if is_draft_id(draft_id) else None
         stored = store.read(draft.id) if draft else None
         if draft is None or stored is None:

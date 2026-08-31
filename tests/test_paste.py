@@ -1,20 +1,11 @@
 import dataclasses
 
-import pytest
 from fastapi.testclient import TestClient
 
-from draftbin.app import PASTE_COOKIE, create_app
+from draftbin.app import ACCESS_COOKIE, create_app
 from tests.conftest import TOKEN
 
 PASTE = {"text": "# Pasted\n\nFrom a phone.", "token": TOKEN}
-
-
-@pytest.fixture
-def browser(app):
-    """https, or the cookie jar drops the Secure cookie; redirects stay unfollowed
-    because where the form sends you is half of what is under test."""
-    with TestClient(app, base_url="https://testserver", follow_redirects=False) as client:
-        yield client
 
 
 def test_the_form_publishes_and_sends_you_to_the_draft(browser):
@@ -50,12 +41,14 @@ def test_the_cookie_alone_publishes_the_next_time(browser):
     assert response.status_code == 303
 
 
-def test_the_cookie_cannot_be_read_by_script_or_sent_cross_site(browser):
-    """SameSite=Strict is what stops a hostile page making the browser publish."""
+def test_the_cookie_cannot_be_read_by_script_or_sent_on_a_cross_site_post(browser):
+    """Lax still withholds the cookie on a cross-site POST, which is what a hostile page
+    would need to make the browser publish. It rides along on link clicks, which is the
+    whole point: a draft link opened from Slack should not ask for the token again."""
     header = browser.post("/paste", data=PASTE).headers["set-cookie"].lower()
     assert "httponly" in header
-    assert "samesite=strict" in header
-    assert f"{PASTE_COOKIE}=" in header
+    assert "samesite=lax" in header
+    assert f"{ACCESS_COOKIE}=" in header
 
 
 def test_the_cookie_is_secure_only_over_https(config):
@@ -90,13 +83,13 @@ def test_a_bad_token_re_renders_the_form_with_the_text_intact(browser):
 
 
 def test_a_rotated_token_clears_the_stale_cookie_instead_of_looping(browser):
-    browser.cookies.set(PASTE_COOKIE, "a-token-from-before-the-rotation")
+    browser.cookies.set(ACCESS_COOKIE, "a-token-from-before-the-rotation")
 
     response = browser.post("/paste", data={"text": "# Note"})
     assert response.status_code == 401
     assert "rotated" in response.text
     assert 'name="token"' in response.text
-    assert f'{PASTE_COOKIE}=""' in response.headers["set-cookie"]
+    assert f'{ACCESS_COOKIE}=""' in response.headers["set-cookie"]
 
 
 def test_an_empty_paste_is_refused_rather_than_published(browser):
@@ -117,4 +110,4 @@ def test_the_paste_form_is_never_cached(browser):
 
 
 def test_the_landing_page_advertises_the_real_default_ttl(browser):
-    assert "48 hours" in browser.get("/").text
+    assert "30 days" in browser.get("/").text
