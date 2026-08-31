@@ -1,5 +1,7 @@
 .venv/
-.local/
+# Every throwaway data dir, log, and cookie jar a local run leaves behind, not just
+# the default DRAFTBIN_DATA_DIR.
+.local*
 .env
 __pycache__/
 build/
