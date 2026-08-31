@@ -3,7 +3,7 @@ import time
 from fastapi.testclient import TestClient
 
 from draftbin.app import create_app
-from tests.conftest import AUTH
+from tests.conftest import AUTH, unlocked
 
 
 def upload(client, ttl_seconds=None):
@@ -68,4 +68,4 @@ def test_startup_keeps_files_that_still_have_a_row(client, app, config):
     draft_id = upload(client, ttl_seconds=3600)
 
     with TestClient(create_app(config)) as restarted:
-        assert restarted.get(f"/d/{draft_id}").status_code == 200
+        assert unlocked(restarted).get(f"/d/{draft_id}").status_code == 200

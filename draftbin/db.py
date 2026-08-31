@@ -137,9 +137,12 @@ class Database:
         return Draft(**row) if row else None
 
     def list_live(self, now: int) -> list[Draft]:
+        """rowid breaks the tie, because created_at is whole seconds and two drafts
+        published in the same one would otherwise order arbitrarily."""
         with self.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM drafts WHERE expires_at > ? ORDER BY created_at DESC", (now,)
+                "SELECT * FROM drafts WHERE expires_at > ? ORDER BY created_at DESC, rowid DESC",
+                (now,),
             ).fetchall()
         return [Draft(**row) for row in rows]
 

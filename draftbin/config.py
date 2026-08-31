@@ -5,8 +5,10 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from draftbin.templates import THEMES
 
-DEFAULT_TTL_SECONDS = 48 * 60 * 60
-DEFAULT_MAX_TTL_SECONDS = 7 * 24 * 60 * 60
+# Reading takes the token now, so a draft's lifetime is no longer what keeps it private
+# and no longer has to be short. See "Why links expire" in the README.
+DEFAULT_TTL_SECONDS = 30 * 24 * 60 * 60
+DEFAULT_MAX_TTL_SECONDS = 365 * 24 * 60 * 60
 DEFAULT_MAX_UPLOAD_BYTES = 2 * 1024 * 1024
 DEFAULT_SWEEP_INTERVAL_SECONDS = 5 * 60
 DEFAULT_TOMBSTONE_RETENTION_SECONDS = 30 * 24 * 60 * 60

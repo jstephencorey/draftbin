@@ -39,11 +39,13 @@ def test_the_new_expiry_shows_in_the_document(client):
     assert client.get(f"/d/{draft['id']}").text != before
 
 
-def test_extending_cannot_exceed_the_server_maximum(client):
+def test_extending_cannot_exceed_the_server_maximum(client, config):
     draft = publish(client)
 
     response = client.patch(
-        f"/api/drafts/{draft['id']}", json={"ttl_seconds": 604801}, headers=AUTH
+        f"/api/drafts/{draft['id']}",
+        json={"ttl_seconds": config.max_ttl_seconds + 1},
+        headers=AUTH,
     )
     assert response.status_code == 422
 

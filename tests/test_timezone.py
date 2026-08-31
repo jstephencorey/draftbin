@@ -6,13 +6,13 @@ from fastapi.testclient import TestClient
 
 from draftbin.app import create_app
 from draftbin.config import ConfigError, load_config
-from tests.conftest import AUTH
+from tests.conftest import AUTH, unlocked
 
 
 @pytest.fixture
 def denver_client(config):
     with TestClient(create_app(dataclasses.replace(config, timezone="America/Denver"))) as client:
-        yield client
+        yield unlocked(client)
 
 
 def test_expiry_is_shown_in_the_configured_zone(denver_client):

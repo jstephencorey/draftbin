@@ -288,6 +288,31 @@ hr {
   font-size: 0.9em;
 }
 
+.draft-list {
+  list-style: none;
+  padding-left: 0;
+}
+
+.draft-list li {
+  margin: 0;
+  padding: 0.9em 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.draft-list a {
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.draft-list a:hover { text-decoration: underline; }
+
+.draft-list-meta {
+  display: block;
+  margin-top: 0.2em;
+  font-size: 0.8em;
+  color: var(--muted);
+}
+
 @media print {
   body { background: #fff; color: #000; font-size: 11pt; }
   main { max-width: none; padding: 0; }
@@ -334,6 +359,20 @@ def theme_css(theme: str) -> str:
 def format_timestamp(epoch_seconds: int, zone: ZoneInfo) -> str:
     """Reader-facing dates only. The API keeps reporting UTC, which is what machines want."""
     return datetime.fromtimestamp(epoch_seconds, tz=zone).strftime("%Y-%m-%d %H:%M %Z")
+
+
+def format_duration(seconds: int) -> str:
+    """Lifetimes are days now more often than hours, and "720 hours" reads as a mistake."""
+    hours = seconds / 3600
+    if hours < 48:
+        return f"{hours:g} hours"
+    return f"{hours / 24:g} days"
+
+
+def format_size(size_bytes: int) -> str:
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    return f"{size_bytes / 1024:.0f} KB"
 
 
 def render_page(title: str, body_html: str, theme: str) -> str:
@@ -399,14 +438,14 @@ def render_token_field(needs_token: bool) -> str:
 def render_landing(
     public_base_url: str, default_ttl_seconds: int, theme: str, form: PasteForm
 ) -> str:
-    hours = default_ttl_seconds / 3600
+    lifetime = format_duration(default_ttl_seconds)
     error = f'<p class="paste-error">{escape(form.error)}</p>\n' if form.error else ""
     return render_page(
         "draftbin",
         f"""
 <h1>draftbin</h1>
-<p>Paste something below and get back a link that reads well on a phone and deletes
-itself in {hours:g} hours. Markdown is rendered; plain text is fine too.</p>
+<p>Paste something below and get back a private link that reads well on a phone and
+deletes itself in {lifetime}. Markdown is rendered; plain text is fine too.</p>
 {error}<form class="paste-form" method="post" action="/paste">
 <label for="text">Text</label>
 <textarea id="text" name="text" rows="16" required
@@ -416,8 +455,9 @@ itself in {hours:g} hours. Markdown is rendered; plain text is fine too.</p>
 <input id="title" name="title" type="text" value="{escape(form.title, quote=True)}"
        placeholder="Taken from the first heading if left blank">
 {render_token_field(form.needs_token)}<button type="submit">Publish</button>
-<span class="paste-hint">Expires in {hours:g} hours.</span>
+<span class="paste-hint">Expires in {lifetime}.</span>
 </form>
+<p><a href="/drafts">Everything you have published</a></p>
 <h2>From a script</h2>
 <pre><code>curl -X POST {escape(public_base_url)}/api/upload/markdown \\
   -H "Authorization: Bearer $DRAFTBIN_TOKEN" \\
@@ -427,6 +467,55 @@ itself in {hours:g} hours. Markdown is rendered; plain text is fine too.</p>
 prebuilt document instead. Override the lifetime per upload with
 <code>ttl_seconds</code>.</p>
 """,
+        theme,
+    )
+
+
+def render_unlock(theme: str, action: str, error: str | None) -> str:
+    """Says nothing about whether the id behind it resolves, because it is shown before
+    anything is looked up. Enumerating the keyspace has to learn nothing from the reply."""
+    message = f'<p class="paste-error">{escape(error)}</p>\n' if error else ""
+    return render_page(
+        "draftbin",
+        f"""
+<h1>Enter your token</h1>
+<p>Drafts on this server are private. Enter the token once and this device stays
+unlocked.</p>
+{message}<form class="paste-form" method="post" action="{escape(action, quote=True)}">
+{render_token_field(True)}<button type="submit">Unlock</button>
+</form>
+""",
+        theme,
+    )
+
+
+@dataclass(frozen=True)
+class IndexEntry:
+    id: str
+    title: str
+    created_at: int
+    expires_at: int
+    size_bytes: int
+
+
+def render_index(entries: list[IndexEntry], theme: str, zone: ZoneInfo) -> str:
+    """Links are relative, so the listing keeps whatever hostname you arrived on — the
+    same reason the paste form redirects relatively."""
+    if not entries:
+        body = "<p>Nothing published right now.</p>"
+    else:
+        items = "\n".join(
+            f'<li><a href="/d/{escape(entry.id, quote=True)}">{escape(entry.title)}</a>'
+            f'<span class="draft-list-meta">'
+            f"published {format_timestamp(entry.created_at, zone)} &middot; "
+            f"expires {format_timestamp(entry.expires_at, zone)} &middot; "
+            f"{format_size(entry.size_bytes)}</span></li>"
+            for entry in entries
+        )
+        body = f'<ul class="draft-list">\n{items}\n</ul>'
+    return render_page(
+        "Published drafts",
+        f'<h1>Published drafts</h1>\n{body}\n<p><a href="/">Publish another</a></p>\n',
         theme,
     )
 

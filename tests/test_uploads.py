@@ -58,12 +58,14 @@ def test_upload_strips_directories_from_the_filename(client):
     assert response.json()["filename"] == "passwd.html"
 
 
-def test_upload_rejects_a_ttl_over_the_maximum(client):
+def test_upload_rejects_a_ttl_over_the_maximum(client, config):
     response = client.post(
-        "/api/upload", json={"html": HTML_DOC, "ttl_seconds": 604801}, headers=AUTH
+        "/api/upload",
+        json={"html": HTML_DOC, "ttl_seconds": config.max_ttl_seconds + 1},
+        headers=AUTH,
     )
     assert response.status_code == 422
-    assert "604800" in response.json()["detail"]
+    assert str(config.max_ttl_seconds) in response.json()["detail"]
 
 
 def test_upload_rejects_an_oversized_document(client, config):
